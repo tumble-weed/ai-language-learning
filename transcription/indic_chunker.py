@@ -46,7 +46,9 @@ def indic_transcribe_chunks(input_dir, output_file):
 
     # Perform ASR with RNNT decoding
     transcription_rnnt = model(wav, "mr", "rnnt")
-    all_transcripts.append(chunk_file.split('\\')[-1] + "<|transcription|>" +transcription_rnnt)
+    if transcription_rnnt != "":
+      all_transcripts.append(chunk_file.split('\\')[-1] + "<|transcription|>" +transcription_rnnt)
+      
     print(f"RNNT Transcription from {os.path.basename(chunk_file)}: {transcription_rnnt}")
 
   final_text = "\n".join(all_transcripts)

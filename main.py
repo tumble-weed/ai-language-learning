@@ -1,7 +1,7 @@
 import os
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
 # from transcription.whisper_chunker import whisper_transcribe_chunks
-# from transcription.indic_chunker import indic_transcribe_chunks
+from transcription.indic_chunker import indic_transcribe_chunks
 from preprocessing.devnagari_preprocessor import preprocess_text
 from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 from metrics.wfr import WordFrequencyMetric
@@ -38,10 +38,10 @@ OUTPUT_CSV_FILE = BASE_DIR / "output" / "test2_results.csv"
 #     output_file=TRANSCRIBE_OUTPUT_FILE
 # )
 
-# transcribed_text = indic_transcribe_chunks(
-#     input_dir=OUTPUT_DIR,
-#     output_file=TRANSCRIBE_OUTPUT_FILE
-# )
+transcribed_text = indic_transcribe_chunks(
+    input_dir=OUTPUT_DIR,
+    output_file=TRANSCRIBE_OUTPUT_FILE
+)
 
 # Preprocessing
 # preprocessed_text = preprocess_text(transcribed_text)
