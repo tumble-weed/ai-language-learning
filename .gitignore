@@ -1,0 +1,6 @@
+.venv
+huggingface_models
+__pycache__/
+*.pyc
+.env
+output/test2_dialogues
