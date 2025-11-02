@@ -6,3 +6,4 @@ torch
 torchaudio
 soundfile
 python-dotenv
+fasttext-wheel

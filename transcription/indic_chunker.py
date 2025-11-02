@@ -8,15 +8,15 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 torchaudio.set_audio_backend("soundfile")
 
-def indic_transcribe_chunks(input_dir, output_file):
-  # Load the model
-  model = AutoModel.from_pretrained(
-    "ai4bharat/indic-conformer-600m-multilingual", 
-    trust_remote_code=True,
-    cache_dir=HF_MODELS_DIR,
-    token=HF_TOKEN
-  )
+model = AutoModel.from_pretrained(
+  "ai4bharat/indic-conformer-600m-multilingual", 
+  trust_remote_code=True,
+  cache_dir=HF_MODELS_DIR,
+  token=HF_TOKEN
+)
 
+def indic_transcribe_chunks(input_dir, output_file):
+  
   search_pattern = os.path.join(input_dir, '*.wav')
   chunk_files = sorted(glob.glob(search_pattern))
 
@@ -24,7 +24,7 @@ def indic_transcribe_chunks(input_dir, output_file):
     print(f"No audio files found in {input_dir}.")
     return
 
-  all_transcripts = []
+  all_transcripts = {}
   print(f"Found {len(chunk_files)} audio chunks to transcribe.")
 
   for i, chunk_file in enumerate(chunk_files):
@@ -47,12 +47,12 @@ def indic_transcribe_chunks(input_dir, output_file):
     # Perform ASR with RNNT decoding
     transcription_rnnt = model(wav, "mr", "rnnt")
     if transcription_rnnt != "":
-      all_transcripts.append(chunk_file.split('\\')[-1] + "<|transcription|>" +transcription_rnnt)
-      
+      all_transcripts[chunk_file.split('\\')[-1]] = transcription_rnnt
+
     print(f"RNNT Transcription from {os.path.basename(chunk_file)}: {transcription_rnnt}")
 
-  final_text = "\n".join(all_transcripts)
 
+  final_text = "\n".join([f"{k}<|transcription|>{v}" for k, v in all_transcripts.items()])
   try:
     with open(output_file, 'w', encoding='utf-8') as f:
       f.write(final_text)
