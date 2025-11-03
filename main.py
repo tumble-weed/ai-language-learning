@@ -40,7 +40,8 @@ OUTPUT_CSV_FILE = BASE_DIR / "output" / "test2_results.csv"
 
 # transcribed_text = indic_transcribe_chunks(
 #     input_dir=OUTPUT_DIR,
-#     output_file=TRANSCRIBE_OUTPUT_FILE
+#     lang_code='mr'
+#     output_file=TRANSCRIBE_OUTPUT_FILE,
 # )
 
 # Preprocessing

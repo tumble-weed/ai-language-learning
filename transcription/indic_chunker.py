@@ -15,7 +15,7 @@ model = AutoModel.from_pretrained(
   token=HF_TOKEN
 )
 
-def indic_transcribe_chunks(input_dir, output_file):
+def indic_transcribe_chunks(input_dir, lang_code, output_file=None):
   
   search_pattern = os.path.join(input_dir, '*.wav')
   chunk_files = sorted(glob.glob(search_pattern))
@@ -41,23 +41,24 @@ def indic_transcribe_chunks(input_dir, output_file):
         wav = resampler(wav)
 
     # # Perform ASR with CTC decoding
-    # transcription_ctc = model(wav, "mr", "ctc")
+    # transcription_ctc = model(wav, lang_code, "ctc")
     # print("CTC Transcription:", transcription_ctc)
 
     # Perform ASR with RNNT decoding
-    transcription_rnnt = model(wav, "mr", "rnnt")
+    transcription_rnnt = model(wav, lang_code, "rnnt")
     if transcription_rnnt != "":
       all_transcripts[chunk_file.split('\\')[-1]] = transcription_rnnt
 
     print(f"RNNT Transcription from {os.path.basename(chunk_file)}: {transcription_rnnt}")
 
 
-  final_text = "\n".join([f"{k}<|transcription|>{v}" for k, v in all_transcripts.items()])
-  try:
-    with open(output_file, 'w', encoding='utf-8') as f:
-      f.write(final_text)
-    print(f"Transcriptions saved to {output_file}")
-  except Exception as e:
-    print(f"Error saving transcriptions: {e}")
+  if output_file:
+    final_text = "\n".join([f"{k}<|transcription|>{v}" for k, v in all_transcripts.items()])
+    try:
+      with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(final_text)
+      print(f"Transcriptions saved to {output_file}")
+    except Exception as e:
+      print(f"Error saving transcriptions: {e}")
 
   return all_transcripts
