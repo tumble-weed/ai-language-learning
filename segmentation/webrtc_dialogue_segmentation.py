@@ -2,7 +2,7 @@ from pathlib import Path
 import webrtcvad
 from pydub import AudioSegment
 
-def segment_dialogue(audio_file_path, output_dir, vad_aggressiveness=3, min_speech_len_ms=250, min_silence_after_speech_ms=500, padding_ms=200):
+def segment_dialogue(audio_file_path, output_dir, vad_aggressiveness=3, min_speech_len_ms=50, min_silence_after_speech_ms=100, padding_ms=100):
     """Segment dialogue from an audio file.
 
     Accepts either strings or pathlib.Path for audio_file_path and output_dir.

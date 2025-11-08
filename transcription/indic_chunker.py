@@ -2,6 +2,7 @@ from transformers import AutoModel
 import torch, torchaudio
 import os
 import glob
+from pydub import AudioSegment
 
 HF_MODELS_DIR = ".\\huggingface_models"
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -30,7 +31,6 @@ def indic_transcribe_chunks(input_dir, lang_code, output_file=None):
   for i, chunk_file in enumerate(chunk_files):
     print(f"Transcribing chunk {i+1}/{len(chunk_files)}: {os.path.basename(chunk_file)}...")
 
-
     # Load an audio file
     wav, sr = torchaudio.load(chunk_file)
     wav = torch.mean(wav, dim=0, keepdim=True)
@@ -53,7 +53,8 @@ def indic_transcribe_chunks(input_dir, lang_code, output_file=None):
 
 
   if output_file:
-    final_text = "\n".join([f"{k}<|transcription|>{v}" for k, v in all_transcripts.items()])
+    # final_text = "\n".join([f"{k}<|transcription|>{v}" for k, v in all_transcripts.items()])
+    final_text = " ".join(all_transcripts.values())
     try:
       with open(output_file, 'w', encoding='utf-8') as f:
         f.write(final_text)
@@ -62,3 +63,4 @@ def indic_transcribe_chunks(input_dir, lang_code, output_file=None):
       print(f"Error saving transcriptions: {e}")
 
   return all_transcripts
+
