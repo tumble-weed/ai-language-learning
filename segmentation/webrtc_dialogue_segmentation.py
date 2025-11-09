@@ -90,7 +90,7 @@ def segment_dialogue(audio_file_path, output_dir, vad_aggressiveness=3, min_spee
         print(f"Exporting {output_filename}")
         # pydub export expects a filename (string)
         chunk.export(str(output_path), format="wav")
-        exported_files.append(str(output_path))
+        exported_files.append((str(output_path), start_ms, end_ms))
 
     print("Dialogue segmentation completed.")
     return exported_files
