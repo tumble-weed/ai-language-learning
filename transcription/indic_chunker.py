@@ -3,6 +3,7 @@ import torch, torchaudio
 import os
 import glob
 from pydub import AudioSegment
+import pickle
 
 HF_MODELS_DIR = ".\\huggingface_models"
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -16,23 +17,14 @@ model = AutoModel.from_pretrained(
   token=HF_TOKEN
 )
 
-def indic_transcribe_chunks(input_dir, lang_code, output_file=None):
-  
-  search_pattern = os.path.join(input_dir, '*.wav')
-  chunk_files = sorted(glob.glob(search_pattern))
+def indic_transcribe_chunks(lang_code, exported_chunk_paths, output_file=None):
+  all_transcripts = []
 
-  if not chunk_files:
-    print(f"No audio files found in {input_dir}.")
-    return
-
-  all_transcripts = {}
-  print(f"Found {len(chunk_files)} audio chunks to transcribe.")
-
-  for i, chunk_file in enumerate(chunk_files):
-    print(f"Transcribing chunk {i+1}/{len(chunk_files)}: {os.path.basename(chunk_file)}...")
+  for i, file_info in enumerate(exported_chunk_paths):
+    print(f"Transcribing chunk {i+1}/{len(exported_chunk_paths)}: {os.path.basename(file_info[0])}...")
 
     # Load an audio file
-    wav, sr = torchaudio.load(chunk_file)
+    wav, sr = torchaudio.load(file_info[0])
     wav = torch.mean(wav, dim=0, keepdim=True)
 
     target_sample_rate = 16000  # Expected sample rate
@@ -47,20 +39,15 @@ def indic_transcribe_chunks(input_dir, lang_code, output_file=None):
     # Perform ASR with RNNT decoding
     transcription_rnnt = model(wav, lang_code, "rnnt")
     if transcription_rnnt != "":
-      all_transcripts[chunk_file.split('\\')[-1]] = transcription_rnnt
+      all_transcripts.append({"filepath": file_info[0], "text": transcription_rnnt, "start": file_info[1], "end": file_info[2]})
 
-    print(f"RNNT Transcription from {os.path.basename(chunk_file)}: {transcription_rnnt}")
+    print(f"RNNT Transcription from {os.path.basename(file_info[0])}: {transcription_rnnt}")
 
 
+  # Storing all_transcripts all dictionaries to output file
   if output_file:
-    # final_text = "\n".join([f"{k}<|transcription|>{v}" for k, v in all_transcripts.items()])
-    final_text = " ".join(all_transcripts.values())
-    try:
-      with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(final_text)
-      print(f"Transcriptions saved to {output_file}")
-    except Exception as e:
-      print(f"Error saving transcriptions: {e}")
-
+     with open(output_file, 'wb') as f_out:
+        pickle.dump(all_transcripts, f_out)
+        
   return all_transcripts
 
