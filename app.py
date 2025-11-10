@@ -124,7 +124,8 @@ with tab1:
                 'RH_Average': 'rh_avg',
                 'SL_Result': 'sl',
                 'Chunk_ID': 'audio_file',  # Fallback if no Audio_file
-                'WFR_Result': 'wfr'
+                'WFR_Result': 'wfr',
+                'Transliteration': 'transliteration'
             }
             
             # Rename columns to standardized format
@@ -151,6 +152,8 @@ with tab1:
                     df['end_time'] = 0
                 if 'wfr' not in df.columns:
                     df['wfr'] = None
+                if 'transliteration' not in df.columns:
+                    df['transliteration'] = None
                 
                 # Convert DataFrame to list of dicts for session state
                 results_list = df.to_dict('records')
@@ -201,7 +204,8 @@ with tab1:
                             'RH_Average': 'rh_avg',
                             'SL_Result': 'sl',
                             'Chunk_ID': 'audio_file',
-                            'WFR_Result': 'wfr'
+                            'WFR_Result': 'wfr',
+                            'Transliteration': 'transliteration'
                         }
                         
                         # Rename columns
@@ -219,6 +223,8 @@ with tab1:
                             df['start_time'] = 0
                         if 'end_time' not in df.columns:
                             df['end_time'] = 0
+                        if 'transliteration' not in df.columns:
+                            df['transliteration'] = None
                         
                         if all(col in df.columns for col in required_cols):
                             results_list = df.to_dict('records')
@@ -462,6 +468,14 @@ with tab3:
                             </div>
                             """, unsafe_allow_html=True)
                             
+                            # Transliteration below text if available
+                            if row.get('transliteration') and pd.notna(row['transliteration']):
+                                st.markdown(f"""
+                                <div style='background-color: #e8f4f8; padding: 8px; border-radius: 5px; margin-bottom: 10px; font-style: italic; color: #555;'>
+                                    {row['transliteration']}
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
                             # Audio playback
                             audio_path = Path(row['audio_file'])
                             if audio_path.exists():
@@ -487,6 +501,11 @@ with tab3:
                     
                     with col1:
                         st.markdown(f"**Full Text:** {row['sentence']}")
+                        
+                        # Transliteration below text if available
+                        if row.get('transliteration') and pd.notna(row['transliteration']):
+                            st.markdown(f"**Transliteration:** *{row['transliteration']}*")
+                        
                         st.markdown(f"**Audio File:** `{Path(row['audio_file']).name}`")
                         
                         # Audio playback if file exists
