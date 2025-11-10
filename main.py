@@ -1,10 +1,11 @@
 import os
-# from segmentation.webrtc_dialogue_segmentation import segment_dialogue
+from segmentation.webrtc_dialogue_segmentation import segment_dialogue
 # from transcription.whisper_chunker import whisper_transcribe_chunks
-# from transcription.indic_chunker import indic_transcribe_chunks
-# from restore_punctuation.indic_punc_resto import restore_punctuation
-# from preprocessing.indic_preprocessor import preprocess_text
+from transcription.indic_chunker import indic_transcribe_chunks
+from restore_punctuation.indic_punc_resto import restore_punctuation
+from preprocessing.indic_preprocessor import preprocess_text
 from sentence_alignment.align_sentences import align_sentences_to_timestamps
+
 from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 from metrics.wfr import WordFrequencyMetric
 from metrics.sl import SentenceLengthMetric
@@ -17,25 +18,25 @@ dotenv.load_dotenv()  # Load environment variables from .env file
 
 
 BASE_DIR = Path(__file__).resolve().parent
-AUDIO_FILE_PATH = BASE_DIR / "input" / "test1.wav"
-OUTPUT_DIR = BASE_DIR / "output" / "test1_dialogues"
-TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test1_transcribed_output.pkl"
-PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test1_punctuated_output.txt"
-SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test1_sentences_output.txt"
-OUTPUT_CSV_FILE = BASE_DIR / "output" / "test1_results.csv"
+AUDIO_FILE_PATH = BASE_DIR / "input" / "test5.wav"
+OUTPUT_DIR = BASE_DIR / "output" / "test5_dialogues"
+TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test5_transcribed_output.pkl"
+PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test5_punctuated_output.txt"
+SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test5_sentences_output.txt"
+OUTPUT_CSV_FILE = BASE_DIR / "output" / "test5_results.csv"
 
 # Audio segmentation based on silence
-# exported_chunk_paths = segment_dialogue(
-#     audio_file_path=AUDIO_FILE_PATH,
-#     output_dir=OUTPUT_DIR
-# )
+exported_chunk_paths = segment_dialogue(
+    audio_file_path=AUDIO_FILE_PATH,
+    output_dir=OUTPUT_DIR
+)
 
 
-# if(exported_chunk_paths):
-#   print(f"Dialogue segments exported to: {OUTPUT_DIR}")
-# else:
-#   print("No dialogue segments found.")
-#   exit(1)
+if(exported_chunk_paths):
+  print(f"Dialogue segments exported to: {OUTPUT_DIR}")
+else:
+  print("No dialogue segments found.")
+  exit(1)
 
 # Transcribe audio-to-text
 
@@ -45,47 +46,47 @@ OUTPUT_CSV_FILE = BASE_DIR / "output" / "test1_results.csv"
 # )
 
 
-# transcribed_text = indic_transcribe_chunks(
-#     lang_code='te',
-#     exported_chunk_paths=exported_chunk_paths,
-#     output_file=TRANSCRIBE_OUTPUT_FILE
-# )
+transcribed_text = indic_transcribe_chunks(
+    lang_code='te',
+    exported_chunk_paths=exported_chunk_paths,
+    output_file=TRANSCRIBE_OUTPUT_FILE
+)
 
 # punctuated_text = restore_punctuation(" ".join(transcript['text'] for transcript in transcribed_text))
 
-# try:
-#     transcribed_text = {}
-#     with TRANSCRIBE_OUTPUT_FILE.open('rb') as f_in:
-#         transcribed_text = pickle.load(f_in)
+try:
+    transcribed_text = {}
+    with TRANSCRIBE_OUTPUT_FILE.open('rb') as f_in:
+        transcribed_text = pickle.load(f_in)
 
-#         punctuated_text = restore_punctuation(" ".join(transcript['text'] for transcript in transcribed_text))
+        punctuated_text = restore_punctuation(" ".join(transcript['text'] for transcript in transcribed_text))
 
-#         with PUNCTUATED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-#             f_out.write(punctuated_text)
-#         print(f"Punctuated text saved to: {PUNCTUATED_OUTPUT_FILE}")
-# except FileNotFoundError:
-#     print(f"ERROR: Input file not found at {TRANSCRIBE_OUTPUT_FILE}")
+        with PUNCTUATED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            f_out.write(punctuated_text)
+        print(f"Punctuated text saved to: {PUNCTUATED_OUTPUT_FILE}")
+except FileNotFoundError:
+    print(f"ERROR: Input file not found at {TRANSCRIBE_OUTPUT_FILE}")
 
 # Preprocessing
 # preprocessed_text = preprocess_text(punctuated_text, 'mar_Deva')
 
 
-# try:
-#     preprocessed_text = []
-#     with PUNCTUATED_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
-#         # Get first line
-#         punc_text = f_in.read()
+try:
+    preprocessed_text = []
+    with PUNCTUATED_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
+        # Get first line
+        punc_text = f_in.read()
 
-#         preprocessed_text = preprocess_text(punc_text, 'tel_Telu')
+        preprocessed_text = preprocess_text(punc_text, 'tel_Telu')
 
-#         with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-#             f_out.write("\n".join(preprocessed_text))
+        with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            f_out.write("\n".join(preprocessed_text))
             
-#         print(f"Preprocessed sentences saved to: {SENTENCE_OUTPUT_FILE}")
-# except FileNotFoundError:
-#     print(f"ERROR: Input file not found at {TRANSCRIBE_OUTPUT_FILE}")
-# except Exception as e:
-#     print(f"An error occurred: {e}")
+        print(f"Preprocessed sentences saved to: {SENTENCE_OUTPUT_FILE}")
+except FileNotFoundError:
+    print(f"ERROR: Input file not found at {TRANSCRIBE_OUTPUT_FILE}")
+except Exception as e:
+    print(f"An error occurred: {e}")
 
 # After preprocessing, Identify the the proper timestamp for each sentenc chunk and get the 
 # corresponding audio file
@@ -145,4 +146,9 @@ except Exception as e:
     print(f"An error occurred: {e}")
 
 
-# Create a frontend to visualize the result better
+"""
+TODO:
+1. Working on more telugu videos
+2. Telugu in English characters
+3. Working on Metrics
+"""

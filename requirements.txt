@@ -7,3 +7,5 @@ torchaudio
 soundfile
 python-dotenv
 fasttext-wheel
+streamlit
+pandas
