@@ -4,8 +4,9 @@ import os
 # from transcription.indic_chunker import indic_transcribe_chunks
 # from restore_punctuation.indic_punc_resto import restore_punctuation
 # from preprocessing.indic_preprocessor import preprocess_text
-from sentence_alignment.align_sentences import align_sentences_to_timestamps
-from transliteration.indic_en_trlit import transliterate_indic_to_english
+# from sentence_alignment.align_sentences import align_sentences_to_timestamps
+# from transliteration.indic_en_trlit import transliterate_indic_to_english
+from translation.indic_en_translation import translate_indic_to_english
 from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 from metrics.wfr import WordFrequencyMetric
 from metrics.sl import SentenceLengthMetric
@@ -18,12 +19,14 @@ dotenv.load_dotenv()  # Load environment variables from .env file
 
 
 BASE_DIR = Path(__file__).resolve().parent
-AUDIO_FILE_PATH = BASE_DIR / "input" / "test3.wav"
-OUTPUT_DIR = BASE_DIR / "output" / "test3_dialogues"
-TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test3_transcribed_output.pkl"
-PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test3_punctuated_output.txt"
-SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test3_sentences_output.txt"
-OUTPUT_CSV_FILE = BASE_DIR / "output" / "test3_results.csv"
+AUDIO_FILE_PATH = BASE_DIR / "input" / "test5.wav"
+OUTPUT_DIR = BASE_DIR / "output" / "test5_dialogues"
+TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test5_transcribed_output.pkl"
+PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test5_punctuated_output.txt"
+SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test5_sentences_output.txt"
+TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_transliteration_output.pkl"
+TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_translation_output.pkl"
+OUTPUT_CSV_FILE = BASE_DIR / "output" / "test5_results.csv"
 
 # Audio segmentation based on silence
 # exported_chunk_paths = segment_dialogue(
@@ -94,11 +97,31 @@ OUTPUT_CSV_FILE = BASE_DIR / "output" / "test3_results.csv"
 # aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
 # aligned_result = transliterate_indic_to_english(aligned_result, 'te')
 
-with SENTENCE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('rb') as t_in:
-    transcribed_text = pickle.load(t_in)
-    preprocessed_text = [line.strip() for line in f_in if line.strip()] 
-    aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
-    aligned_result = transliterate_indic_to_english(aligned_result, 'mr')
+# with SENTENCE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('rb') as t_in:
+#     transcribed_text = pickle.load(t_in)
+#     preprocessed_text = [line.strip() for line in f_in if line.strip()] 
+#     aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
+#     aligned_result = transliterate_indic_to_english(aligned_result, 'te')
+
+#     # save result into file after transliteration
+#     with TRANSLITERATION_OUTPUT_FILE.open('wb') as f_out:
+#         pickle.dump(aligned_result, f_out)
+
+
+with TRANSLITERATION_OUTPUT_FILE.open('rb') as f_in:
+    aligned_result = pickle.load(f_in)
+    BATCH_SIZE = 1
+    translated_result = []
+
+    for i in range(0, len(aligned_result), BATCH_SIZE):
+        chunk = aligned_result[i:i+BATCH_SIZE]
+        print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
+        translated = translate_indic_to_english(chunk, 'te')
+        translated_result.extend(translated)
+
+    # save result into file after translation
+    with TRANSLATION_OUTPUT_FILE.open('wb') as f_out:
+        pickle.dump(translated_result, f_out)
 
 # Calculate difficulty score
 rh1 = IndicReadabilityRH1()
@@ -109,7 +132,7 @@ sl = SentenceLengthMetric()
 # frequencies = wrf.get_frequencies()
 
 results_list = []
-for t in aligned_result:
+for t in translated_result:
     rh1Res = rh1.compute(t["sentence"])
     rh2Res = rh2.compute(t["sentence"])
     avg = (rh1Res + rh2Res) / 2
@@ -120,6 +143,7 @@ for t in aligned_result:
         "Audio_file": t["audio_file"],
         "Text": t["sentence"],
         "Transliteration": t.get("transliteration", ""),
+        "Translation": t.get("translation", ""),
         "RH1_Result": rh1Res,
         "RH2_Result": rh2Res,
         "RH_Average": avg,
@@ -137,7 +161,7 @@ sorted_results = sorted(
 
 
 # Can also export to .json if needed. Exporting to CSV for simplicity.
-header = ["Audio_file", "Text", "Transliteration", "RH1_Result", "RH2_Result", "RH_Average", "SL_Result"]
+header = ["Audio_file", "Text", "Transliteration", "Translation", "RH1_Result", "RH2_Result", "RH_Average", "SL_Result"]
 try:
     with OUTPUT_CSV_FILE.open('w', encoding='utf-8', newline='') as f_out:
         writer = csv.DictWriter(f_out, fieldnames=header)
@@ -153,5 +177,10 @@ except Exception as e:
 TODO:
 1. Working on more telugu videos
 2. Telugu in English characters
-3. Working on Metrics
+3. Adding translation
+4. Add a tab for guess game
+5. Working on Metrics
+    - Speech
+    - Plural
+    - Tenses
 """

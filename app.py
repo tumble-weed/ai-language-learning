@@ -88,7 +88,7 @@ with st.sidebar:
     )
 
 # Main content area
-tab1, tab2, tab3, tab4 = st.tabs(["� Load Results", "�📤 Upload & Process", "📊 Results", "ℹ️ About"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📂 Load Results", "📤 Upload & Process", "📊 Results", "🎯 Practice", "ℹ️ About"])
 
 with tab1:
     st.header("Load Existing Results")
@@ -125,7 +125,8 @@ with tab1:
                 'SL_Result': 'sl',
                 'Chunk_ID': 'audio_file',  # Fallback if no Audio_file
                 'WFR_Result': 'wfr',
-                'Transliteration': 'transliteration'
+                'Transliteration': 'transliteration',
+                'Translation': 'translation'
             }
             
             # Rename columns to standardized format
@@ -154,6 +155,8 @@ with tab1:
                     df['wfr'] = None
                 if 'transliteration' not in df.columns:
                     df['transliteration'] = None
+                if 'translation' not in df.columns:
+                    df['translation'] = None
                 
                 # Convert DataFrame to list of dicts for session state
                 results_list = df.to_dict('records')
@@ -205,7 +208,8 @@ with tab1:
                             'SL_Result': 'sl',
                             'Chunk_ID': 'audio_file',
                             'WFR_Result': 'wfr',
-                            'Transliteration': 'transliteration'
+                            'Transliteration': 'transliteration',
+                            'Translation': 'translation'
                         }
                         
                         # Rename columns
@@ -225,6 +229,8 @@ with tab1:
                             df['end_time'] = 0
                         if 'transliteration' not in df.columns:
                             df['transliteration'] = None
+                        if 'translation' not in df.columns:
+                            df['translation'] = None
                         
                         if all(col in df.columns for col in required_cols):
                             results_list = df.to_dict('records')
@@ -476,6 +482,14 @@ with tab3:
                                 </div>
                                 """, unsafe_allow_html=True)
                             
+                            # Translation below transliteration if available
+                            if row.get('translation') and pd.notna(row['translation']):
+                                st.markdown(f"""
+                                <div style='background-color: #fff4e6; padding: 8px; border-radius: 5px; margin-bottom: 10px; color: #333;'>
+                                    {row['translation']}
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
                             # Audio playback
                             audio_path = Path(row['audio_file'])
                             if audio_path.exists():
@@ -505,6 +519,10 @@ with tab3:
                         # Transliteration below text if available
                         if row.get('transliteration') and pd.notna(row['transliteration']):
                             st.markdown(f"**Transliteration:** *{row['transliteration']}*")
+                        
+                        # Translation below transliteration if available
+                        if row.get('translation') and pd.notna(row['translation']):
+                            st.markdown(f"**Translation:** {row['translation']}")
                         
                         st.markdown(f"**Audio File:** `{Path(row['audio_file']).name}`")
                         
@@ -537,6 +555,155 @@ with tab3:
         st.info("👈 Upload and process an audio file in the **Upload & Process** tab, or load existing results in the **Load Results** tab.")
 
 with tab4:
+    st.header("🎯 Practice Mode")
+    
+    st.markdown("""
+    Practice your language skills! See the translation and try to guess the original sentence, 
+    then reveal and play the audio to check your answer.
+    """)
+    
+    if st.session_state.processing_complete and st.session_state.processed_results:
+        df = pd.DataFrame(st.session_state.processed_results)
+        
+        # Filter to only sentences that have translations
+        practice_df = df[df['translation'].notna() & (df['translation'] != '')]
+        
+        if len(practice_df) == 0:
+            st.warning("⚠️ No sentences with translations available for practice. Please load a CSV file with a Translation column.")
+        else:
+            # Initialize practice session state
+            if 'practice_index' not in st.session_state:
+                st.session_state.practice_index = 0
+            if 'show_answer' not in st.session_state:
+                st.session_state.show_answer = False
+            if 'practice_order' not in st.session_state:
+                # Shuffle for random practice
+                st.session_state.practice_order = practice_df.sample(frac=1).reset_index(drop=True)
+            
+            practice_sentences = st.session_state.practice_order
+            current_idx = st.session_state.practice_index
+            
+            if current_idx >= len(practice_sentences):
+                st.success("🎉 You've completed all sentences! Click 'Restart Practice' to go again.")
+                if st.button("🔄 Restart Practice", type="primary"):
+                    st.session_state.practice_index = 0
+                    st.session_state.show_answer = False
+                    st.session_state.practice_order = practice_df.sample(frac=1).reset_index(drop=True)
+                    st.rerun()
+            else:
+                current_sentence = practice_sentences.iloc[current_idx]
+                
+                # Progress indicator
+                st.progress((current_idx + 1) / len(practice_sentences))
+                st.caption(f"Sentence {current_idx + 1} of {len(practice_sentences)}")
+                
+                st.divider()
+                
+                # Display translation in a prominent box
+                st.markdown("### 📖 Translation:")
+                st.markdown(f"""
+                <div style='background-color: #fff4e6; padding: 20px; border-radius: 10px; margin: 20px 0; font-size: 1.2em; text-align: center;'>
+                    <strong>{current_sentence['translation']}</strong>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Difficulty hint
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("💡 Difficulty", f"{current_sentence['rh_avg']:.1f}")
+                with col2:
+                    st.metric("📏 Length", f"{int(current_sentence['sl'])} words")
+                with col3:
+                    difficulty_label = "Easy" if current_sentence['rh_avg'] < 33 else "Medium" if current_sentence['rh_avg'] < 66 else "Hard"
+                    st.metric("🎯 Level", difficulty_label)
+                
+                st.divider()
+                
+                # User input area
+                st.markdown("### ✍️ Your Guess:")
+                user_guess = st.text_area(
+                    "Type what you think the original sentence is:",
+                    height=100,
+                    key=f"guess_{current_idx}",
+                    placeholder="Type your answer here..."
+                )
+                
+                # Control buttons
+                col1, col2, col3 = st.columns([1, 1, 2])
+                
+                with col1:
+                    if st.button("👁️ Show Answer", type="primary", use_container_width=True):
+                        st.session_state.show_answer = True
+                
+                with col2:
+                    if st.button("⏭️ Next Sentence", use_container_width=True):
+                        st.session_state.practice_index += 1
+                        st.session_state.show_answer = False
+                        st.rerun()
+                
+                # Show answer section
+                if st.session_state.show_answer:
+                    st.divider()
+                    st.markdown("### ✅ Correct Answer:")
+                    
+                    # Original sentence
+                    st.markdown(f"""
+                    <div style='background-color: #f0f2f6; padding: 15px; border-radius: 5px; margin-bottom: 10px;'>
+                        <strong style='font-size: 1.1em;'>{current_sentence['sentence']}</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Transliteration if available
+                    if current_sentence.get('transliteration') and pd.notna(current_sentence['transliteration']):
+                        st.markdown(f"""
+                        <div style='background-color: #e8f4f8; padding: 12px; border-radius: 5px; margin-bottom: 10px; font-style: italic; color: #555;'>
+                            {current_sentence['transliteration']}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Audio playback
+                    st.markdown("#### 🔊 Listen:")
+                    audio_path = Path(current_sentence['audio_file'])
+                    if audio_path.exists():
+                        st.audio(str(audio_path), format='audio/wav')
+                    else:
+                        st.warning("⚠️ Audio file not found")
+                    
+                    # Comparison if user typed something
+                    if user_guess.strip():
+                        st.markdown("#### 📝 Your Answer vs Correct Answer:")
+                        comp_col1, comp_col2 = st.columns(2)
+                        with comp_col1:
+                            st.markdown("**Your Guess:**")
+                            st.info(user_guess)
+                        with comp_col2:
+                            st.markdown("**Correct:**")
+                            st.success(current_sentence['sentence'])
+            
+            # Practice controls at bottom
+            st.divider()
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("🔄 Shuffle & Restart", use_container_width=True):
+                    st.session_state.practice_index = 0
+                    st.session_state.show_answer = False
+                    st.session_state.practice_order = practice_df.sample(frac=1).reset_index(drop=True)
+                    st.rerun()
+            
+            with col2:
+                if st.button("⏮️ Previous", disabled=(current_idx == 0), use_container_width=True):
+                    st.session_state.practice_index = max(0, current_idx - 1)
+                    st.session_state.show_answer = False
+                    st.rerun()
+            
+            with col3:
+                st.caption(f"Progress: {min(current_idx + 1, len(practice_sentences))}/{len(practice_sentences)}")
+    
+    else:
+        st.info("👈 Load results from the **Load Results** tab to start practicing!")
+
+with tab5:
     st.header("About This Tool")
     
     st.markdown("""
