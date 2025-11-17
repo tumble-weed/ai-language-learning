@@ -6,7 +6,7 @@ import os
 # from preprocessing.indic_preprocessor import preprocess_text
 # from sentence_alignment.align_sentences import align_sentences_to_timestamps
 # from transliteration.indic_en_trlit import transliterate_indic_to_english
-from translation.indic_en_translation import translate_indic_to_english
+# from translation.indic_en_translation import translate_indic_to_english
 from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 from metrics.wfr import WordFrequencyMetric
 from metrics.sl import SentenceLengthMetric
@@ -108,20 +108,23 @@ OUTPUT_CSV_FILE = BASE_DIR / "output" / "test5_results.csv"
 #         pickle.dump(aligned_result, f_out)
 
 
-with TRANSLITERATION_OUTPUT_FILE.open('rb') as f_in:
-    aligned_result = pickle.load(f_in)
-    BATCH_SIZE = 1
-    translated_result = []
+# with TRANSLITERATION_OUTPUT_FILE.open('rb') as f_in:
+#     aligned_result = pickle.load(f_in)
+#     BATCH_SIZE = 1
+#     translated_result = []
 
-    for i in range(0, len(aligned_result), BATCH_SIZE):
-        chunk = aligned_result[i:i+BATCH_SIZE]
-        print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
-        translated = translate_indic_to_english(chunk, 'te')
-        translated_result.extend(translated)
+#     for i in range(0, len(aligned_result), BATCH_SIZE):
+#         chunk = aligned_result[i:i+BATCH_SIZE]
+#         print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
+#         translated = translate_indic_to_english(chunk, 'te')
+#         translated_result.extend(translated)
 
-    # save result into file after translation
-    with TRANSLATION_OUTPUT_FILE.open('wb') as f_out:
-        pickle.dump(translated_result, f_out)
+#     # save result into file after translation
+#     with TRANSLATION_OUTPUT_FILE.open('wb') as f_out:
+#         pickle.dump(translated_result, f_out)
+
+with TRANSLATION_OUTPUT_FILE.open('rb') as f_in:
+    translated_result = pickle.load(f_in)
 
 # Calculate difficulty score
 rh1 = IndicReadabilityRH1()
@@ -179,8 +182,14 @@ TODO:
 2. Telugu in English characters
 3. Adding translation
 4. Add a tab for guess game
-5. Working on Metrics
+5. Working on Metrics 
     - Speech
     - Plural
     - Tenses
+
+Stanza
+get list of morphosyntactic features for each word in the sentence
+perform analysis and feature engineering
+create regression model to predict difficulty level based on these features
+
 """

@@ -4,13 +4,17 @@ Provides audio upload, processing pipeline, and interactive results visualizatio
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import pickle
 from pathlib import Path
 import tempfile
 import shutil
-from typing import List, Dict
+from typing import List, Dict, Optional
 import os
+import html
+import base64
+from textwrap import dedent
 
 # # Import your existing modules
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
@@ -34,6 +38,102 @@ if 'audio_file_path' not in st.session_state:
     st.session_state.audio_file_path = None
 if 'processing_complete' not in st.session_state:
     st.session_state.processing_complete = False
+
+
+@st.cache_data(show_spinner=False)
+def build_practice_card_sections(
+    sentence: str,
+    translation: str,
+    transliteration: str,
+    audio_file: str,
+    audio_html: Optional[str],
+    rh_avg: float,
+    rh1: float,
+    rh2: float,
+    sl: float,
+) -> Dict[str, str]:
+    """Return pre-rendered HTML sections for a practice card."""
+    translation_html = html.escape(str(translation))
+    sentence_html = html.escape(str(sentence))
+    transliteration_html = html.escape(str(transliteration)) if transliteration else ""
+
+    metric_grid_html = dedent(f"""
+    <div class="metric-grid">
+        <div class="metric">
+            <span>Words</span>
+            <strong>{int(sl)}</strong>
+        </div>
+        <div class="metric">
+            <span>RH Average</span>
+            <strong>{rh_avg:.1f}</strong>
+        </div>
+        <div class="metric">
+            <span>RH1</span>
+            <strong>{rh1:.1f}</strong>
+        </div>
+        <div class="metric">
+            <span>RH2</span>
+            <strong>{rh2:.1f}</strong>
+        </div>
+    </div>
+    """).strip()
+
+    translation_block = dedent(f"""
+    <div class="translation-block">
+        <div class="section-label">Translation</div>
+        <p>{translation_html}</p>
+    </div>
+    """).strip()
+
+    answer_content = dedent(f"""
+    <div class="answer-content">
+        <div class="section-label">Correct Sentence</div>
+        <p>{sentence_html}</p>
+    </div>
+    """).strip()
+
+    if transliteration_html:
+        translit_block = dedent(f"""
+        <div class="translit-content">
+            <div class="section-label">Transliteration</div>
+            <p>{transliteration_html}</p>
+        </div>
+        """).strip()
+    else:
+        translit_block = dedent("""
+        <div class="translit-content">
+            <div class="section-label">Transliteration</div>
+            <div class="placeholder-note">Transliteration not provided for this sentence.</div>
+        </div>
+        """).strip()
+
+    audio_path = Path(audio_file)
+    if audio_html is None:
+        fallback_html = "<div class='audio-missing'>Audio file not available</div>"
+        if audio_path.exists():
+            try:
+                with audio_path.open('rb') as audio_fp:
+                    audio_base64 = base64.b64encode(audio_fp.read()).decode()
+                fallback_html = f"""<audio controls class='practice-audio' src='data:audio/wav;base64,{audio_base64}'></audio>"""
+            except Exception:
+                fallback_html = "<div class='audio-missing'>Audio file could not be loaded</div>"
+        audio_html = fallback_html
+
+    audio_box_html = dedent(f"""
+    <div class="audio-box">
+        <div class="section-label">Audio Playback</div>
+{audio_html}
+        <div class="audio-filename">{html.escape(audio_path.name if audio_path.exists() else Path(audio_file).name)}</div>
+    </div>
+    """).strip()
+
+    return {
+        "metric_grid": metric_grid_html,
+        "translation_block": translation_block,
+        "answer_content": answer_content,
+        "translit_block": translit_block,
+        "audio_box": audio_box_html,
+    }
 
 # Title and description
 st.title("🎙️ Language Learning Difficulty Analyzer")
@@ -474,26 +574,101 @@ with tab3:
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            # Transliteration below text if available
+                            # Transliteration box with toggle
                             if row.get('transliteration') and pd.notna(row['transliteration']):
                                 st.markdown(f"""
-                                <div style='background-color: #e8f4f8; padding: 8px; border-radius: 5px; margin-bottom: 10px; font-style: italic; color: #555;'>
-                                    {row['transliteration']}
+                                <style>
+                                    #translit-toggle-grid-{idx}:checked ~ .translit-content-grid-{idx} .translit-text {{
+                                        visibility: visible !important;
+                                    }}
+                                    #translit-toggle-grid-{idx}:checked ~ .translit-content-grid-{idx} .translit-placeholder {{
+                                        display: none;
+                                    }}
+                                    #translit-toggle-grid-{idx}:checked ~ .toggle-btn-grid-{idx} .toggle-icon-hide {{
+                                        display: inline;
+                                    }}
+                                    #translit-toggle-grid-{idx}:checked ~ .toggle-btn-grid-{idx} .toggle-icon-show {{
+                                        display: none;
+                                    }}
+                                    .toggle-btn-grid-{idx} {{
+                                        cursor: pointer;
+                                        padding: 4px 8px;
+                                        border-radius: 4px;
+                                        background-color: #f0f2f6;
+                                        display: inline-block;
+                                        user-select: none;
+                                        float: right;
+                                    }}
+                                    .toggle-btn-grid-{idx}:hover {{
+                                        background-color: #e0e2e6;
+                                    }}
+                                    .toggle-icon-hide {{
+                                        display: none;
+                                    }}
+                                </style>
+                                <input type="checkbox" id="translit-toggle-grid-{idx}" style="display: none;">
+                                <label for="translit-toggle-grid-{idx}" class="toggle-btn-grid-{idx}" title="Toggle transliteration">
+                                    <span class="toggle-icon-show">🔤</span>
+                                    <span class="toggle-icon-hide">✕</span>
+                                </label>
+                                <div class="translit-content-grid-{idx}" style='background-color: #e8f4f8; padding: 8px; border-radius: 5px; margin-bottom: 5px; font-style: italic; color: #555; min-height: 20px; clear: both;'>
+                                    <span class="translit-placeholder" style="color: #999;">Show Transliteration</span>
+                                    <span class="translit-text" style="visibility: hidden;">{row['transliteration']}</span>
                                 </div>
                                 """, unsafe_allow_html=True)
                             
-                            # Translation below transliteration if available
+                            # Translation box with toggle
                             if row.get('translation') and pd.notna(row['translation']):
                                 st.markdown(f"""
-                                <div style='background-color: #fff4e6; padding: 8px; border-radius: 5px; margin-bottom: 10px; color: #333;'>
-                                    {row['translation']}
+                                <style>
+                                    #trans-toggle-grid-{idx}:checked ~ .trans-content-grid-{idx} .trans-text {{
+                                        visibility: visible !important;
+                                    }}
+                                    #trans-toggle-grid-{idx}:checked ~ .trans-content-grid-{idx} .trans-placeholder {{
+                                        display: none;
+                                    }}
+                                    #trans-toggle-grid-{idx}:checked ~ .toggle-trans-btn-grid-{idx} .toggle-trans-icon-hide {{
+                                        display: inline;
+                                    }}
+                                    #trans-toggle-grid-{idx}:checked ~ .toggle-trans-btn-grid-{idx} .toggle-trans-icon-show {{
+                                        display: none;
+                                    }}
+                                    .toggle-trans-btn-grid-{idx} {{
+                                        cursor: pointer;
+                                        padding: 4px 8px;
+                                        border-radius: 4px;
+                                        background-color: #f0f2f6;
+                                        display: inline-block;
+                                        user-select: none;
+                                        float: right;
+                                    }}
+                                    .toggle-trans-btn-grid-{idx}:hover {{
+                                        background-color: #e0e2e6;
+                                    }}
+                                    .toggle-trans-icon-hide {{
+                                        display: none;
+                                    }}
+                                </style>
+                                <input type="checkbox" id="trans-toggle-grid-{idx}" style="display: none;">
+                                <label for="trans-toggle-grid-{idx}" class="toggle-trans-btn-grid-{idx}" title="Toggle translation">
+                                    <span class="toggle-trans-icon-show">🌐</span>
+                                    <span class="toggle-trans-icon-hide">✕</span>
+                                </label>
+                                <div class="trans-content-grid-{idx}" style='background-color: #fff4e6; padding: 8px; border-radius: 5px; margin-bottom: 10px; color: #333; min-height: 20px; clear: both;'>
+                                    <span class="trans-placeholder" style="color: #999;">Show Translation</span>
+                                    <span class="trans-text" style="visibility: hidden;">{row['translation']}</span>
                                 </div>
                                 """, unsafe_allow_html=True)
                             
                             # Audio playback
                             audio_path = Path(row['audio_file'])
                             if audio_path.exists():
-                                st.audio(str(audio_path), format='audio/wav')
+                                try:
+                                    with open(audio_path, 'rb') as audio_file:
+                                        audio_bytes = audio_file.read()
+                                    st.audio(audio_bytes, format='audio/wav')
+                                except Exception as e:
+                                    st.warning(f"⚠️ Could not load audio: {e}")
                             else:
                                 st.warning("⚠️ Audio not found")
                             
@@ -516,20 +691,103 @@ with tab3:
                     with col1:
                         st.markdown(f"**Full Text:** {row['sentence']}")
                         
-                        # Transliteration below text if available
+                        # Transliteration box with toggle
                         if row.get('transliteration') and pd.notna(row['transliteration']):
-                            st.markdown(f"**Transliteration:** *{row['transliteration']}*")
+                            st.markdown(f"""
+                            <style>
+                                #translit-toggle-list-{idx}:checked ~ .translit-text-list-{idx} .translit-content {{
+                                    visibility: visible !important;
+                                }}
+                                #translit-toggle-list-{idx}:checked ~ .translit-text-list-{idx} .translit-list-placeholder {{
+                                    display: none;
+                                }}
+                                #translit-toggle-list-{idx}:checked ~ .toggle-list-btn-{idx} .toggle-list-icon-hide {{
+                                    display: inline;
+                                }}
+                                #translit-toggle-list-{idx}:checked ~ .toggle-list-btn-{idx} .toggle-list-icon-show {{
+                                    display: none;
+                                }}
+                                .toggle-list-btn-{idx} {{
+                                    cursor: pointer;
+                                    padding: 4px 8px;
+                                    border-radius: 4px;
+                                    background-color: #f0f2f6;
+                                    display: inline-block;
+                                    user-select: none;
+                                }}
+                                .toggle-list-btn-{idx}:hover {{
+                                    background-color: #e0e2e6;
+                                }}
+                                .toggle-list-icon-hide {{
+                                    display: none;
+                                }}
+                            </style>
+                            <input type="checkbox" id="translit-toggle-list-{idx}" style="display: none;">
+                            <label for="translit-toggle-list-{idx}" class="toggle-list-btn-{idx}" title="Toggle transliteration">
+                                <span class="toggle-list-icon-show">🔤</span>
+                                <span class="toggle-list-icon-hide">✕</span>
+                            </label>
+                            <div class="translit-text-list-{idx}" style="display: inline-block; margin-left: 10px;">
+                                <strong>Transliteration:</strong> 
+                                <span class="translit-list-placeholder" style="color: #999; font-style: italic;">Show Transliteration</span>
+                                <span class="translit-content" style="visibility: hidden; font-style: italic;">{row['transliteration']}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
                         
-                        # Translation below transliteration if available
+                        # Translation box with toggle
                         if row.get('translation') and pd.notna(row['translation']):
-                            st.markdown(f"**Translation:** {row['translation']}")
+                            st.markdown(f"""
+                            <style>
+                                #trans-toggle-list-{idx}:checked ~ .trans-text-list-{idx} .trans-content {{
+                                    visibility: visible !important;
+                                }}
+                                #trans-toggle-list-{idx}:checked ~ .trans-text-list-{idx} .trans-list-placeholder {{
+                                    display: none;
+                                }}
+                                #trans-toggle-list-{idx}:checked ~ .toggle-trans-list-btn-{idx} .toggle-trans-list-icon-hide {{
+                                    display: inline;
+                                }}
+                                #trans-toggle-list-{idx}:checked ~ .toggle-trans-list-btn-{idx} .toggle-trans-list-icon-show {{
+                                    display: none;
+                                }}
+                                .toggle-trans-list-btn-{idx} {{
+                                    cursor: pointer;
+                                    padding: 4px 8px;
+                                    border-radius: 4px;
+                                    background-color: #f0f2f6;
+                                    display: inline-block;
+                                    user-select: none;
+                                }}
+                                .toggle-trans-list-btn-{idx}:hover {{
+                                    background-color: #e0e2e6;
+                                }}
+                                .toggle-trans-list-icon-hide {{
+                                    display: none;
+                                }}
+                            </style>
+                            <input type="checkbox" id="trans-toggle-list-{idx}" style="display: none;">
+                            <label for="trans-toggle-list-{idx}" class="toggle-trans-list-btn-{idx}" title="Toggle translation">
+                                <span class="toggle-trans-list-icon-show">🌐</span>
+                                <span class="toggle-trans-list-icon-hide">✕</span>
+                            </label>
+                            <div class="trans-text-list-{idx}" style="display: inline-block; margin-left: 10px;">
+                                <strong>Translation:</strong> 
+                                <span class="trans-list-placeholder" style="color: #999;">Show Translation</span>
+                                <span class="trans-content" style="visibility: hidden;">{row['translation']}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
                         
                         st.markdown(f"**Audio File:** `{Path(row['audio_file']).name}`")
                         
                         # Audio playback if file exists
                         audio_path = Path(row['audio_file'])
                         if audio_path.exists():
-                            st.audio(str(audio_path), format='audio/wav')
+                            try:
+                                with open(audio_path, 'rb') as audio_file:
+                                    audio_bytes = audio_file.read()
+                                st.audio(audio_bytes, format='audio/wav')
+                            except Exception as e:
+                                st.warning(f"⚠️ Could not load audio: {e}")
                         else:
                             st.warning("⚠️ Audio file not found")
                     
@@ -558,151 +816,222 @@ with tab4:
     st.header("🎯 Practice Mode")
     
     st.markdown("""
-    Practice your language skills! See the translation and try to guess the original sentence, 
-    then reveal and play the audio to check your answer.
+    Practice your language skills! See the translation and try to guess the original sentence.
+    Use the controls below to tailor your practice set, then reveal the answer and audio when you're ready.
     """)
     
     if st.session_state.processing_complete and st.session_state.processed_results:
         df = pd.DataFrame(st.session_state.processed_results)
         
         # Filter to only sentences that have translations
-        practice_df = df[df['translation'].notna() & (df['translation'] != '')]
+        practice_df = df[df['translation'].notna() & (df['translation'] != '')].copy()
         
         if len(practice_df) == 0:
             st.warning("⚠️ No sentences with translations available for practice. Please load a CSV file with a Translation column.")
         else:
-            # Initialize practice session state
-            if 'practice_index' not in st.session_state:
-                st.session_state.practice_index = 0
-            if 'show_answer' not in st.session_state:
-                st.session_state.show_answer = False
-            if 'practice_order' not in st.session_state:
-                # Shuffle for random practice
-                st.session_state.practice_order = practice_df.sample(frac=1).reset_index(drop=True)
+            # Difficulty helpers
+            def categorize_difficulty(score: float) -> str:
+                if score < 33:
+                    return "Easy"
+                if score < 66:
+                    return "Medium"
+                return "Hard"
+
+            practice_df['difficulty_label'] = practice_df['rh_avg'].apply(categorize_difficulty)
+            difficulty_emojis = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}
+            difficulty_options = ["Easy", "Medium", "Hard"]
+
+            # Practice stats
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📚 Total Sentences", len(practice_df))
+            with col2:
+                avg_difficulty = practice_df['rh_avg'].mean()
+                st.metric("📊 Avg Difficulty", f"{avg_difficulty:.1f}")
+            with col3:
+                easy_count = len(practice_df[practice_df['difficulty_label'] == "Easy"])
+                medium_count = len(practice_df[practice_df['difficulty_label'] == "Medium"])
+                hard_count = len(practice_df[practice_df['difficulty_label'] == "Hard"])
+                st.metric("🎯 Easy/Medium/Hard", f"{easy_count}/{medium_count}/{hard_count}")
             
-            practice_sentences = st.session_state.practice_order
-            current_idx = st.session_state.practice_index
-            
-            if current_idx >= len(practice_sentences):
-                st.success("🎉 You've completed all sentences! Click 'Restart Practice' to go again.")
-                if st.button("🔄 Restart Practice", type="primary"):
-                    st.session_state.practice_index = 0
-                    st.session_state.show_answer = False
-                    st.session_state.practice_order = practice_df.sample(frac=1).reset_index(drop=True)
-                    st.rerun()
+            st.divider()
+
+            st.markdown("### 🎛️ Practice Controls")
+            controls_col1, controls_col2, controls_col3 = st.columns([2, 1.2, 0.8])
+            search_query = controls_col1.text_input(
+                "Search translation or sentence",
+                placeholder="Type a word to filter your cards..."
+            )
+            selected_difficulties = controls_col2.multiselect(
+                "Difficulty level",
+                options=difficulty_options,
+                default=difficulty_options
+            )
+            shuffle_cards = controls_col3.toggle("Shuffle order", value=False)
+
+            filtered_df = practice_df
+            active_difficulties = selected_difficulties if selected_difficulties else difficulty_options
+            filtered_df = filtered_df[filtered_df['difficulty_label'].isin(active_difficulties)]
+
+            if search_query:
+                mask = (
+                    filtered_df['translation'].str.contains(search_query, case=False, na=False) |
+                    filtered_df['sentence'].str.contains(search_query, case=False, na=False)
+                )
+                filtered_df = filtered_df[mask]
+
+            if filtered_df.empty:
+                st.warning("⚠️ No sentences match your current filters. Try widening the search or selecting more difficulty levels.")
             else:
-                current_sentence = practice_sentences.iloc[current_idx]
+                if shuffle_cards:
+                    filtered_df = filtered_df.sample(frac=1).reset_index(drop=True)
                 
-                # Progress indicator
-                st.progress((current_idx + 1) / len(practice_sentences))
-                st.caption(f"Sentence {current_idx + 1} of {len(practice_sentences)}")
+                filtered_df = filtered_df.reset_index(drop=True)
                 
-                st.divider()
+                st.caption(f"Showing {len(filtered_df)} matching sentence(s).")
                 
-                # Display translation in a prominent box
-                st.markdown("### 📖 Translation:")
-                st.markdown(f"""
-                <div style='background-color: #fff4e6; padding: 20px; border-radius: 10px; margin: 20px 0; font-size: 1.2em; text-align: center;'>
-                    <strong>{current_sentence['translation']}</strong>
-                </div>
+                # CSS for practice cards styling
+                st.markdown("""
+                <style>
+                .practice-card-flag {
+                    display: none;
+                }
+                div[data-testid="stVerticalBlock"]:has(.practice-card-flag) {
+                    background: #ffffff;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 18px;
+                    padding: 24px;
+                    margin-bottom: 20px;
+                    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+                }
+                .practice-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 4px 14px;
+                    border-radius: 999px;
+                    font-weight: 600;
+                    font-size: 0.9rem;
+                }
+                .practice-pill.easy {
+                    background: #e7f8ef;
+                    color: #0f8a45;
+                }
+                .practice-pill.medium {
+                    background: #fff4e5;
+                    color: #b45309;
+                }
+                .practice-pill.hard {
+                    background: #fdecea;
+                    color: #b91c1c;
+                }
+                .translation-box {
+                    background: linear-gradient(135deg, #f8fbff 0%, #eef2ff 100%);
+                    border-radius: 14px;
+                    padding: 20px;
+                    margin: 18px 0;
+                    font-size: 1.15rem;
+                    line-height: 1.6;
+                    color: #1f2937;
+                    border: 1px solid #dbeafe;
+                }
+                .practice-section {
+                    border-radius: 12px;
+                    padding: 18px;
+                    margin-top: 16px;
+                }
+                .answer-section {
+                    border: 1px solid #d1fae5;
+                    background: #ecfdf5;
+                }
+                .translit-section {
+                    border: 1px solid #bfdbfe;
+                    background: #eff6ff;
+                }
+                .audio-section {
+                    border: 1px solid #f5d0fe;
+                    background: linear-gradient(135deg, #fdf4ff 0%, #fce7f3 100%);
+                }
+                .section-label {
+                    font-size: 0.8rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                    margin-bottom: 10px;
+                    font-weight: 600;
+                }
+                .answer-section .section-label {
+                    color: #0f766e;
+                }
+                .translit-section .section-label {
+                    color: #1d4ed8;
+                }
+                .audio-section .section-label {
+                    color: #a21caf;
+                }
+                </style>
                 """, unsafe_allow_html=True)
                 
-                # Difficulty hint
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("💡 Difficulty", f"{current_sentence['rh_avg']:.1f}")
-                with col2:
-                    st.metric("📏 Length", f"{int(current_sentence['sl'])} words")
-                with col3:
-                    difficulty_label = "Easy" if current_sentence['rh_avg'] < 33 else "Medium" if current_sentence['rh_avg'] < 66 else "Hard"
-                    st.metric("🎯 Level", difficulty_label)
-                
-                st.divider()
-                
-                # User input area
-                st.markdown("### ✍️ Your Guess:")
-                user_guess = st.text_area(
-                    "Type what you think the original sentence is:",
-                    height=100,
-                    key=f"guess_{current_idx}",
-                    placeholder="Type your answer here..."
-                )
-                
-                # Control buttons
-                col1, col2, col3 = st.columns([1, 1, 2])
-                
-                with col1:
-                    if st.button("👁️ Show Answer", type="primary", use_container_width=True):
-                        st.session_state.show_answer = True
-                
-                with col2:
-                    if st.button("⏭️ Next Sentence", use_container_width=True):
-                        st.session_state.practice_index += 1
-                        st.session_state.show_answer = False
-                        st.rerun()
-                
-                # Show answer section
-                if st.session_state.show_answer:
-                    st.divider()
-                    st.markdown("### ✅ Correct Answer:")
+                # Render each practice card using native Streamlit components
+                for idx, row in filtered_df.iterrows():
+                    difficulty_label = row['difficulty_label']
+                    difficulty_class = difficulty_label.lower()
+                    difficulty_emoji = difficulty_emojis.get(difficulty_label, "")
                     
-                    # Original sentence
-                    st.markdown(f"""
-                    <div style='background-color: #f0f2f6; padding: 15px; border-radius: 5px; margin-bottom: 10px;'>
-                        <strong style='font-size: 1.1em;'>{current_sentence['sentence']}</strong>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Transliteration if available
-                    if current_sentence.get('transliteration') and pd.notna(current_sentence['transliteration']):
-                        st.markdown(f"""
-                        <div style='background-color: #e8f4f8; padding: 12px; border-radius: 5px; margin-bottom: 10px; font-style: italic; color: #555;'>
-                            {current_sentence['transliteration']}
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    # Audio playback
-                    st.markdown("#### 🔊 Listen:")
-                    audio_path = Path(current_sentence['audio_file'])
-                    if audio_path.exists():
-                        st.audio(str(audio_path), format='audio/wav')
-                    else:
-                        st.warning("⚠️ Audio file not found")
-                    
-                    # Comparison if user typed something
-                    if user_guess.strip():
-                        st.markdown("#### 📝 Your Answer vs Correct Answer:")
-                        comp_col1, comp_col2 = st.columns(2)
-                        with comp_col1:
-                            st.markdown("**Your Guess:**")
-                            st.info(user_guess)
-                        with comp_col2:
-                            st.markdown("**Correct:**")
-                            st.success(current_sentence['sentence'])
-            
-            # Practice controls at bottom
-            st.divider()
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("🔄 Shuffle & Restart", use_container_width=True):
-                    st.session_state.practice_index = 0
-                    st.session_state.show_answer = False
-                    st.session_state.practice_order = practice_df.sample(frac=1).reset_index(drop=True)
-                    st.rerun()
-            
-            with col2:
-                if st.button("⏮️ Previous", disabled=(current_idx == 0), use_container_width=True):
-                    st.session_state.practice_index = max(0, current_idx - 1)
-                    st.session_state.show_answer = False
-                    st.rerun()
-            
-            with col3:
-                st.caption(f"Progress: {min(current_idx + 1, len(practice_sentences))}/{len(practice_sentences)}")
+                    with st.container():
+                        st.markdown('<div class="practice-card-flag"></div>', unsafe_allow_html=True)
+                        # Header with difficulty badge
+                        col_header1, col_header2 = st.columns([3, 1])
+                        with col_header1:
+                            st.markdown(f'<span class="practice-pill {difficulty_class}">{difficulty_emoji} {difficulty_label}</span>', unsafe_allow_html=True)
+                            st.caption(f"Sentence {idx + 1}")
+                        with col_header2:
+                            st.metric("Avg RH", f"{row['rh_avg']:.1f}", label_visibility="visible")
+                        
+                        # Metrics row
+                        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                        with metric_col1:
+                            st.metric("Words", f"{int(row['sl'])}")
+                        with metric_col2:
+                            st.metric("RH Average", f"{row['rh_avg']:.1f}")
+                        with metric_col3:
+                            st.metric("RH1", f"{row['rh1']:.1f}")
+                        with metric_col4:
+                            st.metric("RH2", f"{row['rh2']:.1f}")
+                        
+                        # Translation (always visible)
+                        st.markdown(f'<div class="translation-box"><strong>Translation:</strong><br>{html.escape(str(row["translation"]))}</div>', unsafe_allow_html=True)
+                        
+                        st.info("💡 Try to recall or construct the original sentence, then reveal the answer below.")
+                        
+                        # Expandable answer section
+                        with st.expander("👁️ **Show Answer**", expanded=False):
+                            # Sentence
+                            st.markdown(f'<div class="practice-section answer-section"><div class="section-label">Correct Sentence</div><p style="font-size: 1.05rem; margin: 0;">{html.escape(str(row["sentence"]))}</p></div>', unsafe_allow_html=True)
+                            
+                            # Transliteration
+                            if row.get('transliteration') and pd.notna(row['transliteration']):
+                                st.markdown(f'<div class="practice-section translit-section"><div class="section-label">Transliteration</div><p style="font-size: 1.05rem; margin: 0; font-style: italic;">{html.escape(str(row["transliteration"]))}</p></div>', unsafe_allow_html=True)
+                            else:
+                                st.markdown('<div class="practice-section translit-section"><div class="section-label">Transliteration</div><p style="color: #94a3b8; font-style: italic;">Transliteration not provided for this sentence.</p></div>', unsafe_allow_html=True)
+                            
+                            # Audio playback
+                            st.markdown('<div class="practice-section audio-section"><div class="section-label">Audio Playback</div>', unsafe_allow_html=True)
+                            audio_path = Path(row['audio_file'])
+                            if audio_path.exists():
+                                try:
+                                    with open(audio_path, 'rb') as audio_file:
+                                        audio_bytes = audio_file.read()
+                                    st.audio(audio_bytes, format='audio/wav')
+                                    st.caption(f"📁 {audio_path.name}")
+                                except Exception as e:
+                                    st.warning(f"⚠️ Could not load audio: {e}")
+                            else:
+                                st.warning("⚠️ Audio file not found")
+                            st.markdown('</div>', unsafe_allow_html=True)
     
     else:
         st.info("👈 Load results from the **Load Results** tab to start practicing!")
-
+        
 with tab5:
     st.header("About This Tool")
     
