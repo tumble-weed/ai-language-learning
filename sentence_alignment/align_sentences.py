@@ -149,7 +149,8 @@ def align_sentences_to_timestamps(chunks, final_sentences, original_audio_file, 
         results.append({
             "sentence": sent,
             "start": round(start_time, 2),
-            "end": round(end_time, 2)
+            "end": round(end_time, 2),
+            "original_audio_file": str(original_audio_file.relative_to(Path(original_audio_file).parent))
         })
         
     print(f"✅ Successfully aligned {len(results)} sentences.")
@@ -196,7 +197,8 @@ def align_sentences_to_timestamps(chunks, final_sentences, original_audio_file, 
             print(f"❌ ERROR exporting {output_filename}: {e}")
         
         # Storing the path in the result dictionary, as in your code
-        r['audio_file'] = str(output_filename)
+        # Store relative path
+        r['audio_file'] = str(output_filename.relative_to(output_dir.parent))
     
     print("✅ Export complete.")
     return results

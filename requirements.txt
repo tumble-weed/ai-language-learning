@@ -10,3 +10,5 @@ fasttext-wheel
 streamlit
 pandas
 indictranstoolkit
+modAL-python
+spacy

@@ -144,6 +144,9 @@ for t in translated_result:
 
     row_data = {
         "Audio_file": t["audio_file"],
+        "Original_audio_file": t["original_audio_file"],
+        "Start": t["start"],
+        "End": t["end"],
         "Text": t["sentence"],
         "Transliteration": t.get("transliteration", ""),
         "Translation": t.get("translation", ""),
@@ -164,7 +167,7 @@ sorted_results = sorted(
 
 
 # Can also export to .json if needed. Exporting to CSV for simplicity.
-header = ["Audio_file", "Text", "Transliteration", "Translation", "RH1_Result", "RH2_Result", "RH_Average", "SL_Result"]
+header = ["Audio_file", "Original_audio_file", "Start", "End", "Text", "Transliteration", "Translation", "RH1_Result", "RH2_Result", "RH_Average", "SL_Result"]
 try:
     with OUTPUT_CSV_FILE.open('w', encoding='utf-8', newline='') as f_out:
         writer = csv.DictWriter(f_out, fieldnames=header)
@@ -175,19 +178,15 @@ try:
 except Exception as e:
     print(f"An error occurred: {e}")
 
+# Use AUDIO_FILE_PATH and OUTPUT_CSV_FILE path to save the audio file and
+# CSV file on rclone
+
+
+
 
 """
 TODO:
-1. Working on more telugu videos
-2. Telugu in English characters
-3. Adding translation
-4. Add a tab for guess game
-5. Working on Metrics 
-    - Speech
-    - Plural
-    - Tenses
-
-Stanza
+SpaCy
 get list of morphosyntactic features for each word in the sentence
 perform analysis and feature engineering
 create regression model to predict difficulty level based on these features
