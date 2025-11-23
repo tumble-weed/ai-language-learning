@@ -49,10 +49,39 @@ if 'sentence_annotations' not in st.session_state:
     st.session_state.sentence_annotations = {}
 if 'audio_snippets_cache' not in st.session_state:
     st.session_state.audio_snippets_cache = {}
+if 'practice_df' not in st.session_state:
+    st.session_state.practice_df = None
+if 'audio_file_link' not in st.session_state:
+    st.session_state.audio_file_link = None
 
-
-
-
+# Initialize global master audio element if audio link is available
+if st.session_state.audio_file_link:
+    components.html(f"""
+        <audio id="globalMasterAudio" preload="auto" src="{st.session_state.audio_file_link}" style="display: none;"></audio>
+        <script>
+            (function() {{
+                // Initialize or update the global master audio
+                const audio = document.getElementById('globalMasterAudio');
+                
+                // Make accessible to all parent windows
+                if (window.parent) {{
+                    window.parent.globalMasterAudio = audio;
+                }}
+                if (window.parent && window.parent.parent) {{
+                    window.parent.parent.globalMasterAudio = audio;
+                }}
+                if (window.top) {{
+                    window.top.globalMasterAudio = audio;
+                }}
+                
+                // Update src if link exists
+                const audioLink = "{st.session_state.audio_file_link}";
+                if (audioLink && audio.src !== audioLink) {{
+                    audio.src = audioLink;
+                }}
+            }})();
+        </script>
+    """, height=0)
 
 
 def ensure_results_df() -> Optional[pd.DataFrame]:
@@ -64,241 +93,143 @@ def ensure_results_df() -> Optional[pd.DataFrame]:
         st.session_state.results_df = pd.DataFrame(processed)
     return st.session_state.results_df
 
-
-@st.cache_data(show_spinner=False)
-def apply_filters_and_sort(df: pd.DataFrame, sort_by: str, sl_range: tuple, rh_range: tuple) -> pd.DataFrame:
-    """Cache filtered and sorted results to avoid recomputation."""
-    # Apply sorting
-    if sort_by == 'Difficulty (Easy → Hard)':
-        df = df.sort_values(['sl', 'rh_avg'], ascending=[True, True])
-    elif sort_by == 'Difficulty (Hard → Easy)':
-        df = df.sort_values(['sl', 'rh_avg'], ascending=[False, False])
-    elif sort_by == 'Sentence Length':
-        df = df.sort_values('sl', ascending=True)
-    else:  # Audio File
-        df = df.sort_values('audio_file', ascending=True)
+# @st.cache_data(show_spinner=False)
+# def apply_filters_and_sort(df: pd.DataFrame, sort_by: str, sl_range: tuple, rh_range: tuple) -> pd.DataFrame:
+#     """Cache filtered and sorted results to avoid recomputation."""
+#     # Apply sorting
+#     if sort_by == 'Difficulty (Easy → Hard)':
+#         df = df.sort_values(['sl', 'rh_avg'], ascending=[True, True])
+#     elif sort_by == 'Difficulty (Hard → Easy)':
+#         df = df.sort_values(['sl', 'rh_avg'], ascending=[False, False])
+#     elif sort_by == 'Sentence Length':
+#         df = df.sort_values('sl', ascending=True)
+#     else:  # Audio File
+#         df = df.sort_values('audio_file', ascending=True)
     
-    # Reset index
-    df = df.reset_index(drop=True)
+#     # Reset index
+#     df = df.reset_index(drop=True)
     
-    # Apply filters
-    filtered_df = df[
-        (df['sl'] >= sl_range[0]) & 
-        (df['sl'] <= sl_range[1]) &
-        (df['rh_avg'] >= rh_range[0]) & 
-        (df['rh_avg'] <= rh_range[1])
-    ]
+#     # Apply filters
+#     filtered_df = df[
+#         (df['sl'] >= sl_range[0]) & 
+#         (df['sl'] <= sl_range[1]) &
+#         (df['rh_avg'] >= rh_range[0]) & 
+#         (df['rh_avg'] <= rh_range[1])
+#     ]
     
-    return filtered_df
+#     return filtered_df
 
-
-@st.cache_data(show_spinner=False)
-def build_practice_card_sections(
-    sentence: str,
-    translation: str,
-    transliteration: str,
-    audio_file: str,
-    audio_html: Optional[str],
-    rh_avg: float,
-    rh1: float,
-    rh2: float,
-    sl: float,
-) -> Dict[str, str]:
-    """Return pre-rendered HTML sections for a practice card."""
-    translation_html = html.escape(str(translation))
-    sentence_html = html.escape(str(sentence))
-    transliteration_html = html.escape(str(transliteration)) if transliteration else ""
-
-    metric_grid_html = dedent(f"""
-    <div class="metric-grid">
-        <div class="metric">
-            <span>Words</span>
-            <strong>{int(sl)}</strong>
-        </div>
-        <div class="metric">
-            <span>RH Average</span>
-            <strong>{rh_avg:.1f}</strong>
-        </div>
-        <div class="metric">
-            <span>RH1</span>
-            <strong>{rh1:.1f}</strong>
-        </div>
-        <div class="metric">
-            <span>RH2</span>
-            <strong>{rh2:.1f}</strong>
-        </div>
-    </div>
-    """).strip()
-
-    translation_block = dedent(f"""
-    <div class="translation-block">
-        <div class="section-label">Translation</div>
-        <p>{translation_html}</p>
-    </div>
-    """).strip()
-
-    answer_content = dedent(f"""
-    <div class="answer-content">
-        <div class="section-label">Correct Sentence</div>
-        <p>{sentence_html}</p>
-    </div>
-    """).strip()
-
-    if transliteration_html:
-        translit_block = dedent(f"""
-        <div class="translit-content">
-            <div class="section-label">Transliteration</div>
-            <p>{transliteration_html}</p>
-        </div>
-        """).strip()
-    else:
-        translit_block = dedent("""
-        <div class="translit-content">
-            <div class="section-label">Transliteration</div>
-            <div class="placeholder-note">Transliteration not provided for this sentence.</div>
-        </div>
-        """).strip()
-
-    audio_path = Path(audio_file)
-    if audio_html is None:
-        fallback_html = "<div class='audio-missing'>Audio file not available</div>"
-        if audio_path.exists():
-            try:
-                with audio_path.open('rb') as audio_fp:
-                    audio_base64 = base64.b64encode(audio_fp.read()).decode()
-                fallback_html = f"""<audio controls class='practice-audio' src='data:audio/wav;base64,{audio_base64}'></audio>"""
-            except Exception:
-                fallback_html = "<div class='audio-missing'>Audio file could not be loaded</div>"
-        audio_html = fallback_html
-
-    audio_box_html = dedent(f"""
-    <div class="audio-box">
-        <div class="section-label">Audio Playback</div>
-{audio_html}
-        <div class="audio-filename">{html.escape(audio_path.name if audio_path.exists() else Path(audio_file).name)}</div>
-    </div>
-    """).strip()
-
-    return {
-        "metric_grid": metric_grid_html,
-        "translation_block": translation_block,
-        "answer_content": answer_content,
-        "translit_block": translit_block,
-        "audio_box": audio_box_html,
-    }
-
-
-@st.cache_data(show_spinner=False)
-def extract_audio_clip(audio_data, samplerate: int, start_time: Optional[float], end_time: Optional[float]) -> Optional[bytes]:
-    """Return WAV bytes for the requested time window from already loaded audio data."""
-    if audio_data is None or start_time is None or end_time is None:
-        return None
+# @st.cache_data(show_spinner=False)
+# def extract_audio_clip(audio_data, samplerate: int, start_time: Optional[float], end_time: Optional[float]) -> Optional[bytes]:
+#     """Return WAV bytes for the requested time window from already loaded audio data."""
+#     if audio_data is None or start_time is None or end_time is None:
+#         return None
     
-    try:
-        start_val = float(start_time)
-        end_val = float(end_time)
-    except (TypeError, ValueError):
-        return None
+#     try:
+#         start_val = float(start_time)
+#         end_val = float(end_time)
+#     except (TypeError, ValueError):
+#         return None
     
-    if end_val <= start_val:
-        return None
+#     if end_val <= start_val:
+#         return None
 
-    start_sample = max(0, int(start_val * samplerate))
-    end_sample = min(len(audio_data), int(end_val * samplerate))
-    if start_sample >= end_sample:
-        return None
+#     start_sample = max(0, int(start_val * samplerate))
+#     end_sample = min(len(audio_data), int(end_val * samplerate))
+#     if start_sample >= end_sample:
+#         return None
 
-    clip = audio_data[start_sample:end_sample]
-    buffer = io.BytesIO()
-    sf.write(buffer, clip, samplerate, format='WAV')
-    return buffer.getvalue()
+#     clip = audio_data[start_sample:end_sample]
+#     buffer = io.BytesIO()
+#     sf.write(buffer, clip, samplerate, format='WAV')
+#     return buffer.getvalue()
 
 
-def render_audio_player(row: Dict) -> None:
-    """Display audio snippet using original audio file if available."""
+# def render_audio_player(row: Dict) -> None:
+#     """Display audio snippet using original audio file if available."""
 
-    # st.audio(st.session_state.audio_file_path, format='audio/wav', start_time=row.get('start_time'), end_time=row.get('end_time'))
-    # return
+#     # st.audio(st.session_state.audio_file_path, format='audio/wav', start_time=row.get('start_time'), end_time=row.get('end_time'))
+#     # return
 
-    start = row["start_time"]
-    end = row["end_time"]
+#     start = row["start_time"]
+#     end = row["end_time"]
 
-    safe_id = f"a_{str(start).replace('.', '_')}_{str(end).replace('.', '_')}"
+#     safe_id = f"a_{str(start).replace('.', '_')}_{str(end).replace('.', '_')}"
 
-    audio_html = f"""
-    <audio id="{safe_id}" preload="none" src="{st.session_state.audio_file_link}#t={start},{end}" onplay="window.snippetPlayer(this, {start}, {end})" controls ></audio>
-    <script>
-    // 1. Function Guard: Define the global snippetPlayer function only once
-    if (!window.snippetPlayer) {{
-        window.snippetPlayer = function(audio, start, end) {{
-            // console.log("Snippet player invoked:", audio, start, end);
-            if (!audio) return;
+#     audio_html = f"""
+#     <audio id="{safe_id}" preload="none" src="{st.session_state.audio_file_link}#t={start},{end}" onplay="window.snippetPlayer(this, {start}, {end})" controls ></audio>
+#     <script>
+#     // 1. Function Guard: Define the global snippetPlayer function only once
+#     if (!window.snippetPlayer) {{
+#         window.snippetPlayer = function(audio, start, end) {{
+#             // console.log("Snippet player invoked:", audio, start, end);
+#             if (!audio) return;
 
-            // Clear any previously running interval for this audio element
-            if (audio._snippetInterval) {{
-                clearInterval(audio._snippetInterval);
-            }}
+#             // Clear any previously running interval for this audio element
+#             if (audio._snippetInterval) {{
+#                 clearInterval(audio._snippetInterval);
+#             }}
 
-            // Snap to the start time (necessary if user has scrubbed or it's the first play)
-            if (audio.currentTime < start || audio.currentTime >= end) {{
-                audio.currentTime = start;
-            }}
+#             // Snap to the start time (necessary if user has scrubbed or it's the first play)
+#             if (audio.currentTime < start || audio.currentTime >= end) {{
+#                 audio.currentTime = start;
+#             }}
 
-            // 2. Loop/Stop Logic: Set a new interval to monitor current time
-            audio._snippetInterval = setInterval(() => {{
-                if (audio.currentTime >= end) {{
-                    audio.pause();
-                    // Reset to start time for a clean restart if user plays again
-                    audio.currentTime = start;
-                    clearInterval(audio._snippetInterval);
-                }}
-            }}, 50); // Using 50ms for better precision than 100ms
-        }};
-    }}
-    </script>
-    """
+#             // 2. Loop/Stop Logic: Set a new interval to monitor current time
+#             audio._snippetInterval = setInterval(() => {{
+#                 if (audio.currentTime >= end) {{
+#                     audio.pause();
+#                     // Reset to start time for a clean restart if user plays again
+#                     audio.currentTime = start;
+#                     clearInterval(audio._snippetInterval);
+#                 }}
+#             }}, 50); // Using 50ms for better precision than 100ms
+#         }};
+#     }}
+#     </script>
+#     """
 
-    components.html(audio_html, height=80)
-    return
+#     components.html(audio_html, height=80)
+#     return
 
-    # Extract clip from cached audio data
-    if st.session_state.original_audio_data is not None:
-        start_time = row.get('start_time')
-        end_time = row.get('end_time')
+#     # Extract clip from cached audio data
+#     if st.session_state.original_audio_data is not None:
+#         start_time = row.get('start_time')
+#         end_time = row.get('end_time')
         
-        # Create unique cache key based on start and end times
-        cache_key = f"{start_time}_{end_time}"
+#         # Create unique cache key based on start and end times
+#         cache_key = f"{start_time}_{end_time}"
         
-        # Check if snippet is already in cache
-        if cache_key not in st.session_state.audio_snippets_cache:
-            # Extract and cache the snippet
-            snippet = extract_audio_clip(
-                st.session_state.original_audio_data,
-                st.session_state.original_audio_samplerate,
-                start_time,
-                end_time
-            )
-            st.session_state.audio_snippets_cache[cache_key] = snippet
-        else:
-            # Load from cache
-            snippet = st.session_state.audio_snippets_cache[cache_key]
+#         # Check if snippet is already in cache
+#         if cache_key not in st.session_state.audio_snippets_cache:
+#             # Extract and cache the snippet
+#             snippet = extract_audio_clip(
+#                 st.session_state.original_audio_data,
+#                 st.session_state.original_audio_samplerate,
+#                 start_time,
+#                 end_time
+#             )
+#             st.session_state.audio_snippets_cache[cache_key] = snippet
+#         else:
+#             # Load from cache
+#             snippet = st.session_state.audio_snippets_cache[cache_key]
         
-        caption_parts = []
-        if st.session_state.audio_file_path:
-            caption_parts.append(st.session_state.audio_file_path.name)
-        if start_time is not None and end_time is not None:
-            try:
-                caption_parts.append(f"{float(start_time):.2f}s → {float(end_time):.2f}s")
-            except (TypeError, ValueError):
-                pass
-        caption_text = " | ".join(caption_parts) if caption_parts else "Audio clip"
+#         caption_parts = []
+#         if st.session_state.audio_file_path:
+#             caption_parts.append(st.session_state.audio_file_path.name)
+#         if start_time is not None and end_time is not None:
+#             try:
+#                 caption_parts.append(f"{float(start_time):.2f}s → {float(end_time):.2f}s")
+#             except (TypeError, ValueError):
+#                 pass
+#         caption_text = " | ".join(caption_parts) if caption_parts else "Audio clip"
         
-        if snippet:
-            st.audio(snippet, format='audio/wav')
-            st.caption(f"📁 {caption_text}")
-            return
+#         if snippet:
+#             st.audio(snippet, format='audio/wav')
+#             st.caption(f"📁 {caption_text}")
+#             return
     
-    st.warning("⚠️ Audio clip not available for this sentence")
+#     st.warning("⚠️ Audio clip not available for this sentence")
 
 
 def format_timestamp(seconds: Optional[float]) -> str:
@@ -355,91 +286,6 @@ def preset_save(rating_value: int, idx: int, total_sentences: int):
         notes = "Needs review"
     save_annotation(idx, rating_value, notes, move_next=True, total_sentences=total_sentences)
 
-
-@st.fragment
-def render_annotation_form(current_idx: int, current_row: Dict, existing_annotation: Dict, total_sentences: int):
-    """Isolated annotation form that reruns independently"""
-    
-    default_rating = existing_annotation.get('rating', 5)
-    default_notes = existing_annotation.get('notes', '')
-    current_rating = st.session_state.temp_rating.get(current_idx, default_rating)
-
-    st.markdown("### 🎯 Rate Difficulty")
-    st.caption("1 = Very Easy (beginner) | 10 = Very Hard (advanced)")
-
-    st.markdown("**⚡ Quick Rate & Next:**")
-    preset_cols = st.columns(4)
-    with preset_cols[0]:
-        if st.button("🟢 Easy (3)", use_container_width=True, key=f"preset_easy_{current_idx}"):
-            preset_save(3, current_idx, total_sentences)
-            st.rerun()
-    with preset_cols[1]:
-        if st.button("🟡 Medium (5)", use_container_width=True, key=f"preset_medium_{current_idx}"):
-            preset_save(5, current_idx, total_sentences)
-            st.rerun()
-    with preset_cols[2]:
-        if st.button("🟠 Hard (8)", use_container_width=True, key=f"preset_hard_{current_idx}"):
-            preset_save(8, current_idx, total_sentences)
-            st.rerun()
-    with preset_cols[3]:
-        if st.button("❓ Review (0)", use_container_width=True, key=f"preset_review_{current_idx}"):
-            preset_save(0, current_idx, total_sentences)
-            st.rerun()
-
-    st.divider()
-
-    with st.expander("🎚️ Fine-tune Rating (Optional)", expanded=False):
-        rating_value = st.slider(
-            "Detailed Rating",
-            min_value=1,
-            max_value=10,
-            value=int(current_rating),
-            step=1,
-            help="Slide to adjust, then click Save",
-            key=f'rating_{current_idx}'
-        )
-        
-        # Update temp rating directly without callback
-        st.session_state.temp_rating[current_idx] = rating_value
-
-        if rating_value <= 3:
-            st.success(f"🟢 Easy (Rating: {rating_value}/10)")
-        elif rating_value <= 6:
-            st.warning(f"🟡 Medium (Rating: {rating_value}/10)")
-        elif rating_value <= 8:
-            st.error(f"🟠 Hard (Rating: {rating_value}/10)")
-        else:
-            st.error(f"🔴 Very Hard (Rating: {rating_value}/10)")
-
-        notes = st.text_area(
-            "Notes (optional)",
-            value=default_notes,
-            placeholder="Add context, vocabulary issues, pronunciation notes...",
-            height=100,
-            key=f'notes_{current_idx}'
-        )
-
-        detail_col1, detail_col2, detail_col3 = st.columns([2, 1, 1])
-        with detail_col1:
-            if st.button("💾 Save & Next", type="primary", use_container_width=True, key=f"save_next_{current_idx}"):
-                save_annotation(current_idx, rating_value, notes, move_next=True, total_sentences=total_sentences)
-                st.rerun()
-        with detail_col2:
-            if st.button("💾 Save", use_container_width=True, key=f"save_{current_idx}"):
-                save_annotation(current_idx, rating_value, notes, move_next=False, total_sentences=total_sentences)
-                st.rerun()
-        with detail_col3:
-            if st.button("🗑️ Clear", use_container_width=True, key=f"clear_{current_idx}"):
-                st.session_state.sentence_annotations.pop(current_idx, None)
-                st.session_state.temp_rating.pop(current_idx, None)
-                st.rerun()
-
-    if current_idx in st.session_state.sentence_annotations:
-        anno = st.session_state.sentence_annotations[current_idx]
-        timestamp = anno.get('timestamp', 'Unknown')
-        st.caption(f"✏️ Last saved: Rating {anno.get('rating')}/10 at {timestamp}")
-
-
 # Title and description
 st.title("🎙️ Language Learning Difficulty Analyzer")
 st.markdown("""
@@ -492,7 +338,7 @@ with st.sidebar:
         options=['Difficulty (Easy → Hard)', 'Difficulty (Hard → Easy)', 'Sentence Length', 'Audio File']
     )
 
-# Main content area
+
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📂 Load Results", "📤 Upload & Process", "📊 Results", "🎯 Practice", "📝 Annotate", "ℹ️ About"])
 
 with tab1:
@@ -601,6 +447,38 @@ with tab1:
 
                 # Below code is for directly using audio link without downloading
                 st.session_state.audio_file_link = original_audio_path
+                if st.session_state.audio_file_link:
+                    components.html(f"""
+                        <audio id="globalMasterAudio" preload="auto" src="{st.session_state.audio_file_link}" style="display: none;"></audio>
+                        <script>
+                            (function() {{
+                                // Initialize or update the global master audio
+                                const audio = document.getElementById('globalMasterAudio');
+                                
+                                // Make accessible to all parent windows
+                                if (window.parent) {{
+                                    window.parent.globalMasterAudio = audio;
+                                }}
+                                if (window.parent && window.parent.parent) {{
+                                    window.parent.parent.globalMasterAudio = audio;
+                                }}
+                                if (window.top) {{
+                                    window.top.globalMasterAudio = audio;
+                                }}
+                                
+                                // Update src if link exists
+                                const audioLink = "{st.session_state.audio_file_link}";
+                                if (audioLink && audio.src !== audioLink) {{
+                                    audio.src = audioLink;
+                                    // console.log('Global master audio src updated to:', audioLink);
+                                }}
+                                
+                                // Log for debugging
+                                // console.log('Global master audio initialized:', audio);
+                                // console.log('Current src:', audio.src);
+                            }})();
+                        </script>
+                    """, height=0)
             else:
                 st.session_state.audio_file_path = None
                 st.session_state.original_audio_data = None
@@ -668,33 +546,33 @@ with tab1:
     else:
         st.info("Output folder not found. Process an audio file first or upload a CSV above.")
 
-with tab2:
-    st.header("Upload Audio File")
+# with tab2:
+#     st.header("Upload Audio File")
     
-    uploaded_file = st.file_uploader(
-        "Choose an audio file (WAV, MP3, etc.)",
-        type=['wav', 'mp3', 'ogg', 'flac', 'm4a'],
-        help="Upload an audio file to analyze"
-    )
+#     uploaded_file = st.file_uploader(
+#         "Choose an audio file (WAV, MP3, etc.)",
+#         type=['wav', 'mp3', 'ogg', 'flac', 'm4a'],
+#         help="Upload an audio file to analyze"
+#     )
     
-    if uploaded_file is not None:
-        # Save uploaded file to temp location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            st.session_state.audio_file_path = Path(tmp_file.name)
+#     if uploaded_file is not None:
+#         # Save uploaded file to temp location
+#         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
+#             tmp_file.write(uploaded_file.getvalue())
+#             st.session_state.audio_file_path = Path(tmp_file.name)
         
-        st.success(f"✅ Uploaded: {uploaded_file.name}")
+#         st.success(f"✅ Uploaded: {uploaded_file.name}")
         
-        # Audio player for preview
-        st.audio(uploaded_file, format=f'audio/{Path(uploaded_file.name).suffix[1:]}')
+#         # Audio player for preview
+#         st.audio(uploaded_file, format=f'audio/{Path(uploaded_file.name).suffix[1:]}')
         
-        col1, col2 = st.columns([1, 3])
+#         col1, col2 = st.columns([1, 3])
         
-        with col1:
-            process_button = st.button("🚀 Start Processing", type="primary", use_container_width=True)
+#         with col1:
+#             process_button = st.button("🚀 Start Processing", type="primary", use_container_width=True)
         
-        if process_button:
-            st.info("⚠️ Processing pipeline commented out. Uncomment the import statements and this section to enable full processing.")
+#         if process_button:
+#             st.info("⚠️ Processing pipeline commented out. Uncomment the import statements and this section to enable full processing.")
             # BASE_DIR = Path(__file__).resolve().parent
             # OUTPUT_DIR = BASE_DIR / "output" / "streamlit_temp"
             # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -805,52 +683,8 @@ with tab3:
     st.header("Analysis Results")
     
     if st.session_state.processing_complete and st.session_state.processed_results:
+        # Ensure tabs are pre-computed
         df = ensure_results_df()
-        
-        # Global CSS for toggle functionality (rendered ONCE for entire tab)
-        st.markdown("""
-        <style>
-        /* Transliteration toggle */
-        .translit-toggle-checkbox { display: none; }
-        .translit-toggle-btn {
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 4px;
-            background-color: #f0f2f6;
-            display: inline-block;
-            user-select: none;
-        }
-        .translit-toggle-btn:hover { background-color: #e0e2e6; }
-        .translit-icon-hide { display: none; }
-        .translit-content { display: inline-block; margin-left: 10px; }
-        .translit-placeholder { color: #999; }
-        .translit-text { visibility: hidden; }
-        .translit-toggle-checkbox:checked ~ .translit-toggle-btn .translit-icon-show { display: none; }
-        .translit-toggle-checkbox:checked ~ .translit-toggle-btn .translit-icon-hide { display: inline; }
-        .translit-toggle-checkbox:checked ~ .translit-content .translit-text { visibility: visible !important; }
-        .translit-toggle-checkbox:checked ~ .translit-content .translit-placeholder { display: none; }
-        
-        /* Translation toggle */
-        .trans-toggle-checkbox { display: none; }
-        .trans-toggle-btn {
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 4px;
-            background-color: #f0f2f6;
-            display: inline-block;
-            user-select: none;
-        }
-        .trans-toggle-btn:hover { background-color: #e0e2e6; }
-        .trans-icon-hide { display: none; }
-        .trans-content { display: inline-block; margin-left: 10px; }
-        .trans-placeholder { color: #999; }
-        .trans-text { visibility: hidden; }
-        .trans-toggle-checkbox:checked ~ .trans-toggle-btn .trans-icon-show { display: none; }
-        .trans-toggle-checkbox:checked ~ .trans-toggle-btn .trans-icon-hide { display: inline; }
-        .trans-toggle-checkbox:checked ~ .trans-content .trans-text { visibility: visible !important; }
-        .trans-toggle-checkbox:checked ~ .trans-content .trans-placeholder { display: none; }
-        </style>
-        """, unsafe_allow_html=True)
         
         # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -866,165 +700,268 @@ with tab3:
         st.divider()
         
         # Filters
-        st.subheader("🔍 Filter Results")
-        col1, col2 = st.columns(2)
+        # st.subheader("🔍 Filter Results")
+        # col1, col2 = st.columns(2)
         
-        with col1:
-            sl_range = st.slider(
-                "Sentence Length Range",
-                min_value=int(df['sl'].min()),
-                max_value=int(df['sl'].max()),
-                value=(int(df['sl'].min()), int(df['sl'].max())),
-                key="results_sl_range"
-            )
+        # with col1:
+        #     sl_range = st.slider(
+        #         "Sentence Length Range",
+        #         min_value=int(df['sl'].min()),
+        #         max_value=int(df['sl'].max()),
+        #         value=(int(df['sl'].min()), int(df['sl'].max())),
+        #         key="results_sl_range"
+        #     )
         
-        with col2:
-            rh_range = st.slider(
-                "RH Average Range",
-                min_value=float(df['rh_avg'].min()),
-                max_value=float(df['rh_avg'].max()),
-                value=(float(df['rh_avg'].min()), float(df['rh_avg'].max())),
-                step=0.1,
-                key="results_rh_range"
-            )
+        # with col2:
+        #     rh_range = st.slider(
+        #         "RH Average Range",
+        #         min_value=float(df['rh_avg'].min()),
+        #         max_value=float(df['rh_avg'].max()),
+        #         value=(float(df['rh_avg'].min()), float(df['rh_avg'].max())),
+        #         step=0.1,
+        #         key="results_rh_range"
+        #     )
         
         # Use cached filtering and sorting
-        filtered_df = apply_filters_and_sort(df, sort_by, sl_range, rh_range)
+        # filtered_df = apply_filters_and_sort(df, sort_by, sl_range, rh_range)
         
-        st.info(f"Showing {len(filtered_df)} of {len(df)} sentences")
+        # st.info(f"Showing {len(filtered_df)} of {len(df)} sentences")
         
-        # Display layout options
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.subheader("📋 Sentence List")
-        with col2:
-            view_mode = st.radio(
-                "View Mode",
-                options=["Grid View", "List View"],
-                horizontal=True,
-                label_visibility="collapsed"
-            )
+        st.subheader("📋 Sentence Grid")
         
-        if view_mode == "Grid View":
-            # Grid layout - 2 columns side by side
-            rows = [filtered_df.iloc[i:i+2] for i in range(0, len(filtered_df), 2)]
+        # Prepare data for JavaScript
+        import json
+        
+        sentences_data = []
+        for idx, row in enumerate(df.itertuples()):
+            sentence_obj = {
+                'idx': idx,
+                'sentence': str(row.sentence),
+                'translation': str(getattr(row, 'translation', '')) if pd.notna(getattr(row, 'translation', None)) else '',
+                'transliteration': str(getattr(row, 'transliteration', '')) if pd.notna(getattr(row, 'transliteration', None)) else '',
+                'rh_avg': float(row.rh_avg),
+                'rh1': float(row.rh1),
+                'rh2': float(row.rh2),
+                'sl': int(row.sl),
+                'audio_file': str(row.audio_file),
+                'audio_link': st.session_state.audio_file_link if st.session_state.audio_file_link else '',
+                'start_time': str(getattr(row, 'start_time', '')),
+                'end_time': str(getattr(row, 'end_time', '')),
+                'start_time_sec': float(getattr(row, 'start_time', 0)) if pd.notna(getattr(row, 'start_time', None)) else 0,
+                'end_time_sec': float(getattr(row, 'end_time', 0)) if pd.notna(getattr(row, 'end_time', None)) else 0
+            }
+            sentences_data.append(sentence_obj)
+        
+        sentences_json = json.dumps(sentences_data)
+        
+        # Render using components.html()
+        results_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; background: #f0f2f6; }}
+                .grid-container {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }}
+                .sentence-card {{ background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+                .sentence-header {{ font-weight: 600; color: #666; margin-bottom: 10px; font-size: 14px; }}
+                .sentence-text {{ font-size: 18px; font-weight: 500; margin: 12px 0; line-height: 1.6; color: #333; }}
+                .expander {{ margin: 10px 0; }}
+                .expander-btn {{ background: #f0f2f6; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%; text-align: left; font-weight: 500; }}
+                .expander-btn:hover {{ background: #e5e7eb; }}
+                .expander-content {{ display: none; padding: 10px; background: #f9fafb; border-radius: 6px; margin-top: 5px; }}
+                .expander-content.show {{ display: block; }}
+                .audio-section {{ margin: 15px 0; padding: 15px; background: #f9fafb; border-radius: 8px; }}
+                .custom-audio-controls {{ display: flex; align-items: center; gap: 15px; margin-top: 10px; }}
+                .play-pause-btn {{ width: 40px; height: 40px; border-radius: 50%; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; transition: all 0.2s; }}
+                .play-pause-btn:hover {{ background: #2563eb; transform: scale(1.05); }}
+                .progress-container {{ flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; cursor: pointer; position: relative; }}
+                .progress-bar {{ height: 100%; background: #3b82f6; border-radius: 3px; width: 0%; transition: width 0.1s; }}
+                .time-display {{ font-size: 12px; color: #666; min-width: 80px; text-align: right; }}
+                .file-caption {{ font-size: 12px; color: #666; margin-top: 5px; }}
+                .metrics-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 15px; }}
+                .metric-box {{ background: #f9fafb; padding: 10px; border-radius: 6px; text-align: center; }}
+                .metric-label {{ font-size: 11px; color: #666; margin-bottom: 4px; }}
+                .metric-value {{ font-size: 18px; font-weight: 600; color: #333; }}
+                #masterAudio {{ display: none; }}
+            </style>
+        </head>
+        <body>
+            <div class="grid-container" id="sentencesGrid"></div>
             
-            for row_idx, row_data in enumerate(rows):
-                cols = st.columns(2)
+            <script>
+                const sentences = {sentences_json};
+                // Access global master audio - try multiple levels up the window hierarchy
+                const masterAudio = (window.parent.parent && window.parent.parent.globalMasterAudio) || 
+                                   (window.parent && window.parent.globalMasterAudio) || 
+                                   (window.top && window.top.globalMasterAudio);
+                let currentPlayingIdx = -1;
+                let snippetInterval = null;
                 
-                for col_idx, (idx, row) in enumerate(row_data.iterrows()):
-                    with cols[col_idx]:
-                        # Card-style container
-                        with st.container():
-                            st.markdown(f"##### Sentence {idx+1}")
-                            st.markdown(f"**{row['sentence']}**")
-                            
-                            # Transliteration toggle (using global CSS)
-                            if row.get('transliteration') and pd.notna(row['transliteration']):
-                                st.markdown(f"""
-                                <input type="checkbox" id="translit-{idx}" class="translit-toggle-checkbox">
-                                <label for="translit-{idx}" class="translit-toggle-btn" title="Toggle transliteration">
-                                    <span class="translit-icon-show">📝</span>
-                                    <span class="translit-icon-hide">✕</span>
-                                </label>
-                                <div class="translit-content">
-                                    <strong>Transliteration:</strong> 
-                                    <span class="translit-placeholder">Show Transliteration</span>
-                                    <span class="translit-text">{html.escape(row['transliteration'])}</span>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            
-                            # Translation toggle (using global CSS)
-                            if row.get('translation') and pd.notna(row['translation']):
-                                st.markdown(f"""
-                                <input type="checkbox" id="trans-{idx}" class="trans-toggle-checkbox">
-                                <label for="trans-{idx}" class="trans-toggle-btn" title="Toggle translation">
-                                    <span class="trans-icon-show">🌐</span>
-                                    <span class="trans-icon-hide">✕</span>
-                                </label>
-                                <div class="trans-content">
-                                    <strong>Translation:</strong> 
-                                    <span class="trans-placeholder">Show Translation</span>
-                                    <span class="trans-text">{html.escape(row['translation'])}</span>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            
-                            st.markdown(f"**Audio File:** `{Path(row['audio_file']).name}`")
-                            
-                            # Metrics in compact format
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Length", f"{row['sl']} words")
-                                st.metric("RH1", f"{row['rh1']:.2f}")
-                            with col2:
-                                st.metric("RH2", f"{row['rh2']:.2f}")
-                                st.metric("RH Avg", f"{row['rh_avg']:.2f}")
-                            
-                            # Audio playback
-                            
-                            render_audio_player(row)
-                            
-                            st.divider()
-                            
-        else:
-            # List view with expanders (using global CSS)
-            for idx, row in filtered_df.iterrows():
-                with st.expander(f"**Sentence {idx+1}**: {row['sentence'][:50]}..." if len(row['sentence']) > 50 else f"**Sentence {idx+1}**: {row['sentence']}"):
-                    col1, col2 = st.columns([2, 1])
+                function toggleExpander(idx, type) {{
+                    const content = document.getElementById(`expander-${{type}}-${{idx}}`);
+                    content.classList.toggle('show');
+                }}
+                
+                function formatTime(seconds) {{
+                    const mins = Math.floor(seconds / 60);
+                    const secs = Math.floor(seconds % 60);
+                    return mins + ':' + (secs < 10 ? '0' : '') + secs;
+                }}
+                
+                function updateProgress(idx, startTime, endTime) {{
+                    if (!masterAudio || endTime <= startTime) return;
+                    const currentTime = masterAudio.currentTime;
+                    const duration = endTime - startTime;
+                    const elapsed = Math.max(0, Math.min(currentTime - startTime, duration));
+                    const progress = (elapsed / duration) * 100;
                     
-                    with col1:
-                        st.markdown(f"**Full Text:** {row['sentence']}")
-                        start_label = format_timestamp(row.get('start_time'))
-                        end_label = format_timestamp(row.get('end_time'))
-                        if start_label != "--" or end_label != "--":
-                            st.caption(f"⏱️ {start_label} → {end_label}")
-                        
-                        # Transliteration toggle (using global CSS)
-                        if row.get('transliteration') and pd.notna(row['transliteration']):
-                            st.markdown(f"""
-                            <input type="checkbox" id="translit-list-{idx}" class="translit-toggle-checkbox">
-                            <label for="translit-list-{idx}" class="translit-toggle-btn" title="Toggle transliteration">
-                                <span class="translit-icon-show">🔤</span>
-                                <span class="translit-icon-hide">✕</span>
-                            </label>
-                            <div class="translit-content">
-                                <strong>Transliteration:</strong> 
-                                <span class="translit-placeholder">Show Transliteration</span>
-                                <span class="translit-text">{html.escape(row['transliteration'])}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        # Translation toggle (using global CSS)
-                        if row.get('translation') and pd.notna(row['translation']):
-                            st.markdown(f"""
-                            <input type="checkbox" id="trans-list-{idx}" class="trans-toggle-checkbox">
-                            <label for="trans-list-{idx}" class="trans-toggle-btn" title="Toggle translation">
-                                <span class="trans-icon-show">🌐</span>
-                                <span class="trans-icon-hide">✕</span>
-                            </label>
-                            <div class="trans-content">
-                                <strong>Translation:</strong> 
-                                <span class="trans-placeholder">Show Translation</span>
-                                <span class="trans-text">{html.escape(row['translation'])}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        st.markdown(f"**Audio File:** `{Path(row['audio_file']).name}`")
-                        
-                        # Audio playback if file exists
-                        render_audio_player(row)
+                    document.getElementById(`progress-${{idx}}`).style.width = progress + '%';
+                    document.getElementById(`time-${{idx}}`).textContent = formatTime(elapsed) + ' / ' + formatTime(duration);
+                }}
+                
+                function togglePlayPause(idx, startTime, endTime) {{
+                    if (currentPlayingIdx === idx) {{
+                        pauseAudio(idx);
+                    }} else {{
+                        if (currentPlayingIdx !== -1) pauseAudio(currentPlayingIdx);
+                        playAudio(idx, startTime, endTime);
+                    }}
+                }}
+                
+                function playAudio(idx, startTime, endTime) {{
+                    if (!masterAudio) return;
                     
-                    with col2:
-                        st.metric("Sentence Length", f"{row['sl']} words")
-                        st.metric("RH1 Score", f"{row['rh1']:.2f}")
-                        st.metric("RH2 Score", f"{row['rh2']:.2f}")
-                        st.metric("RH Average", f"{row['rh_avg']:.2f}")
+                    if (masterAudio.currentTime < startTime || masterAudio.currentTime >= endTime) {{
+                        masterAudio.currentTime = startTime;
+                    }}
+                    
+                    masterAudio.play();
+                    currentPlayingIdx = idx;
+                    document.getElementById(`play-btn-${{idx}}`).textContent = '⏸️';
+                    
+                    if (snippetInterval) clearInterval(snippetInterval);
+                    
+                    snippetInterval = setInterval(() => {{
+                        updateProgress(idx, startTime, endTime);
+                        if (masterAudio.currentTime >= endTime) {{
+                            pauseAudio(idx);
+                            masterAudio.currentTime = startTime;
+                            updateProgress(idx, startTime, endTime);
+                        }}
+                    }}, 50);
+                }}
+                
+                function pauseAudio(idx) {{
+                    if (!masterAudio) return;
+                    masterAudio.pause();
+                    currentPlayingIdx = -1;
+                    document.getElementById(`play-btn-${{idx}}`).textContent = '▶️';
+                    if (snippetInterval) {{
+                        clearInterval(snippetInterval);
+                        snippetInterval = null;
+                    }}
+                }}
+                
+                function seekAudio(event, idx, startTime, endTime) {{
+                    if (!masterAudio || endTime <= startTime) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const clickX = event.clientX - rect.left;
+                    const percentage = clickX / rect.width;
+                    const duration = endTime - startTime;
+                    const newTime = startTime + (duration * percentage);
+                    masterAudio.currentTime = Math.max(startTime, Math.min(newTime, endTime));
+                    updateProgress(idx, startTime, endTime);
+                }}
+                
+                function escapeHtml(text) {{
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                }}
+                
+                // Render all sentences
+                const grid = document.getElementById('sentencesGrid');
+                sentences.forEach((s, idx) => {{
+                    const card = document.createElement('div');
+                    card.className = 'sentence-card';
+                    
+                    let html = `
+                        <div class="sentence-header">Sentence ${{idx + 1}}</div>
+                        <div class="sentence-text">${{escapeHtml(s.sentence)}}</div>
+                    `;
+                    
+                    if (s.transliteration) {{
+                        html += `
+                            <div class="expander">
+                                <button class="expander-btn" onclick="toggleExpander(${{idx}}, 'translit')">🔤 Show Transliteration</button>
+                                <div class="expander-content" id="expander-translit-${{idx}}">${{escapeHtml(s.transliteration)}}</div>
+                            </div>
+                        `;
+                    }}
+                    
+                    if (s.translation) {{
+                        html += `
+                            <div class="expander">
+                                <button class="expander-btn" onclick="toggleExpander(${{idx}}, 'trans')">🌐 Show Translation</button>
+                                <div class="expander-content" id="expander-trans-${{idx}}">${{escapeHtml(s.translation)}}</div>
+                            </div>
+                        `;
+                    }}
+                    
+                    if (s.audio_link && masterAudio) {{
+                        const duration = s.end_time_sec - s.start_time_sec;
+                        const formattedDuration = formatTime(duration);
+                        html += `
+                            <div class="audio-section">
+                                <div class="custom-audio-controls">
+                                    <button class="play-pause-btn" id="play-btn-${{idx}}" onclick="togglePlayPause(${{idx}}, ${{s.start_time_sec}}, ${{s.end_time_sec}})">▶️</button>
+                                    <div class="progress-container" onclick="seekAudio(event, ${{idx}}, ${{s.start_time_sec}}, ${{s.end_time_sec}})">
+                                        <div class="progress-bar" id="progress-${{idx}}"></div>
+                                    </div>
+                                    <div class="time-display" id="time-${{idx}}">0:00 / ${{formattedDuration}}</div>
+                                </div>
+                                <div class="file-caption">📁 ${{s.audio_file.split('/').pop().split('\\\\').pop()}}</div>
+                            </div>
+                        `;
+                    }}
+                    
+                    html += `
+                        <div class="metrics-grid">
+                            <div class="metric-box">
+                                <div class="metric-label">Length</div>
+                                <div class="metric-value">${{s.sl}}</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-label">RH Avg</div>
+                                <div class="metric-value">${{s.rh_avg.toFixed(2)}}</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-label">RH1</div>
+                                <div class="metric-value">${{s.rh1.toFixed(2)}}</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-label">RH2</div>
+                                <div class="metric-value">${{s.rh2.toFixed(2)}}</div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    card.innerHTML = html;
+                    grid.appendChild(card);
+                }});
+            </script>
+        </body>
+        </html>
+        """
+        
+        components.html(results_html, height=800, scrolling=True)
         
         # Download results
         st.divider()
         st.subheader("💾 Export Results")
         
-        csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+        csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download Results as CSV",
             data=csv_data,
@@ -1044,23 +981,12 @@ with tab4:
     """)
     
     if st.session_state.processing_complete and st.session_state.processed_results:
-        df = ensure_results_df()
+        practice_df = st.session_state.practice_df
         
-        # Filter to only sentences that have translations
-        practice_df = df[df['translation'].notna() & (df['translation'] != '')].copy()
-        
-        if len(practice_df) == 0:
+        if practice_df is None or len(practice_df) == 0:
             st.warning("⚠️ No sentences with translations available for practice. Please load a CSV file with a Translation column.")
         else:
-            # Difficulty helpers
-            def categorize_difficulty(score: float) -> str:
-                if score < 33:
-                    return "Easy"
-                if score < 66:
-                    return "Medium"
-                return "Hard"
-
-            practice_df['difficulty_label'] = practice_df['rh_avg'].apply(categorize_difficulty)
+            # Difficulty helpers (already computed in precompute_all_tabs)
             difficulty_emojis = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}
             difficulty_options = ["Easy", "Medium", "Hard"]
 
@@ -1081,122 +1007,338 @@ with tab4:
                 avg_length = practice_df['sl'].mean()
                 st.metric("📏 Avg Length", f"{avg_length:.1f} words", help="Average sentence length")
             
-            st.divider()
+            # st.divider()
 
             # Enhanced Controls with better UX
-            st.markdown("### 🎛️ Practice Controls")
+            # st.markdown("### 🎛️ Practice Controls")
             
-            controls_row1_col1, controls_row1_col2 = st.columns([3, 1])
+            # controls_row1_col1, controls_row1_col2 = st.columns([3, 1])
             
-            with controls_row1_col1:
-                search_query = st.text_input(
-                    "🔍 Search translation or sentence",
-                    placeholder="Type keywords to filter practice cards...",
-                    key="practice_search",
-                    help="Search in both translations and original sentences"
-                )
+            # with controls_row1_col1:
+            #     search_query = st.text_input(
+            #         "🔍 Search translation or sentence",
+            #         placeholder="Type keywords to filter practice cards...",
+            #         key="practice_search",
+            #         help="Search in both translations and original sentences"
+            #     )
             
-            with controls_row1_col2:
-                shuffle_cards = st.checkbox("🔀 Shuffle", value=False, key="practice_shuffle", help="Randomize card order")
+            # with controls_row1_col2:
+            #     shuffle_cards = st.checkbox("🔀 Shuffle", value=False, key="practice_shuffle", help="Randomize card order")
             
-            controls_row2_col1, controls_row2_col2 = st.columns([2, 2])
+            # controls_row2_col1, controls_row2_col2 = st.columns([2, 2])
             
-            with controls_row2_col1:
-                selected_difficulties = st.multiselect(
-                    "🎚️ Difficulty Levels",
-                    options=difficulty_options,
-                    default=difficulty_options,
-                    key="practice_difficulty",
-                    help="Filter by difficulty level"
-                )
+            # with controls_row2_col1:
+            #     selected_difficulties = st.multiselect(
+            #         "🎚️ Difficulty Levels",
+            #         options=difficulty_options,
+            #         default=difficulty_options,
+            #         key="practice_difficulty",
+            #         help="Filter by difficulty level"
+            #     )
             
-            with controls_row2_col2:
-                sl_min = int(practice_df['sl'].min())
-                sl_max = int(practice_df['sl'].max())
-                sentence_length_filter = st.slider(
-                    "📏 Sentence Length Range",
-                    min_value=sl_min,
-                    max_value=sl_max,
-                    value=(sl_min, sl_max),
-                    key="practice_sl_filter",
-                    help="Filter by number of words"
-                )
+            # with controls_row2_col2:
+            #     sl_min = int(practice_df['sl'].min())
+            #     sl_max = int(practice_df['sl'].max())
+            #     sentence_length_filter = st.slider(
+            #         "📏 Sentence Length Range",
+            #         min_value=sl_min,
+            #         max_value=sl_max,
+            #         value=(sl_min, sl_max),
+            #         key="practice_sl_filter",
+            #         help="Filter by number of words"
+            #     )
 
             # Apply filters
-            filtered_df = practice_df
-            active_difficulties = selected_difficulties if selected_difficulties else difficulty_options
-            filtered_df = filtered_df[filtered_df['difficulty_label'].isin(active_difficulties)]
+            # filtered_df = practice_df
+            # active_difficulties = selected_difficulties if selected_difficulties else difficulty_options
+            # filtered_df = filtered_df[filtered_df['difficulty_label'].isin(active_difficulties)]
             
-            # Apply sentence length filter
-            filtered_df = filtered_df[
-                (filtered_df['sl'] >= sentence_length_filter[0]) & 
-                (filtered_df['sl'] <= sentence_length_filter[1])
-            ]
+            # # Apply sentence length filter
+            # filtered_df = filtered_df[
+            #     (filtered_df['sl'] >= sentence_length_filter[0]) & 
+            #     (filtered_df['sl'] <= sentence_length_filter[1])
+            # ]
 
-            if search_query:
-                mask = (
-                    filtered_df['translation'].str.contains(search_query, case=False, na=False) |
-                    filtered_df['sentence'].str.contains(search_query, case=False, na=False)
-                )
-                filtered_df = filtered_df[mask]
+            # if search_query:
+            #     mask = (
+            #         filtered_df['translation'].str.contains(search_query, case=False, na=False) |
+            #         filtered_df['sentence'].str.contains(search_query, case=False, na=False)
+            #     )
+            #     filtered_df = filtered_df[mask]
 
-            if filtered_df.empty:
+            if practice_df.empty:
                 st.warning("⚠️ No sentences match your current filters. Try widening the search or selecting more difficulty levels.")
             else:
-                if shuffle_cards:
-                    filtered_df = filtered_df.sample(frac=1).reset_index(drop=True)
+                # if shuffle_cards:
+                #     filtered_df = filtered_df.sample(frac=1).reset_index(drop=True)
                 
-                filtered_df = filtered_df.reset_index(drop=True)
+                practice_df = practice_df.reset_index(drop=True)
                 
                 st.divider()
                 
                 # List view layout
-                st.subheader(f"📚 Practice Cards ({len(filtered_df)} sentences)")
+                st.subheader(f"📚 Practice Cards ({len(practice_df)} sentences)")
                 
-                for idx, row in filtered_df.iterrows():
-                    # Card-style container
-                    with st.container():
-                        difficulty_label = row['difficulty_label']
-                        difficulty_emoji = difficulty_emojis.get(difficulty_label, "")
+                # Prepare data for JavaScript
+                import json
+                
+                practice_sentences = []
+                for idx, row in enumerate(practice_df.itertuples()):
+                    difficulty_label = row.difficulty_label
+                    difficulty_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(difficulty_label, "")
+                    
+                    sentence_obj = {
+                        'idx': idx,
+                        'sentence': str(row.sentence),
+                        'translation': str(row.translation),
+                        'transliteration': str(getattr(row, 'transliteration', '')) if pd.notna(getattr(row, 'transliteration', None)) else '',
+                        'rh_avg': float(row.rh_avg),
+                        'rh1': float(row.rh1),
+                        'rh2': float(row.rh2),
+                        'sl': int(row.sl),
+                        'audio_file': str(row.audio_file),
+                        'audio_link': st.session_state.audio_file_link if st.session_state.audio_file_link else '',
+                        'start_time': str(getattr(row, 'start_time', '')),
+                        'end_time': str(getattr(row, 'end_time', '')),
+                        'start_time_sec': float(getattr(row, 'start_time', 0)) if pd.notna(getattr(row, 'start_time', None)) else 0,
+                        'end_time_sec': float(getattr(row, 'end_time', 0)) if pd.notna(getattr(row, 'end_time', None)) else 0,
+                        'difficulty_label': difficulty_label,
+                        'difficulty_emoji': difficulty_emoji
+                    }
+                    practice_sentences.append(sentence_obj)
+                
+                sentences_json = json.dumps(practice_sentences)
+                
+                # Render using components.html()
+                practice_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+                        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; background: #f0f2f6; }}
+                        .practice-card {{ background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+                        .card-header {{ font-size: 18px; font-weight: 600; margin-bottom: 15px; color: #333; }}
+                        .translation-box {{ background: #e0f2fe; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #0284c7; }}
+                        .translation-text {{ font-size: 16px; line-height: 1.6; color: #0c4a6e; font-weight: 500; }}
+                        .hint {{ font-size: 13px; color: #666; margin: 10px 0; font-style: italic; }}
+                        .metrics-compact {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 15px 0; }}
+                        .metric-box {{ background: #f9fafb; padding: 12px; border-radius: 6px; }}
+                        .metric-label {{ font-size: 12px; color: #666; margin-bottom: 4px; }}
+                        .metric-value {{ font-size: 16px; font-weight: 600; color: #333; }}
+                        .timestamp {{ font-size: 12px; color: #666; margin-top: 5px; }}
+                        .reveal-section {{ margin-top: 15px; }}
+                        .reveal-btn {{ background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; width: 100%; }}
+                        .reveal-btn:hover {{ background: #2563eb; }}
+                        .reveal-content {{ display: none; margin-top: 15px; padding: 15px; background: #f9fafb; border-radius: 8px; }}
+                        .reveal-content.show {{ display: block; }}
+                        .answer-text {{ font-size: 16px; font-weight: 500; margin: 10px 0; line-height: 1.6; }}
+                        .section-label {{ font-weight: 600; margin: 10px 0 5px 0; color: #333; }}
+                        .audio-section {{ margin: 15px 0; padding: 15px; background: white; border-radius: 8px; border: 1px solid #e5e7eb; }}
+                        .custom-audio-controls {{ display: flex; align-items: center; gap: 15px; margin-top: 10px; }}
+                        .play-pause-btn {{ width: 40px; height: 40px; border-radius: 50%; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; transition: all 0.2s; }}
+                        .play-pause-btn:hover {{ background: #2563eb; transform: scale(1.05); }}
+                        .progress-container {{ flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; cursor: pointer; position: relative; }}
+                        .progress-bar {{ height: 100%; background: #3b82f6; border-radius: 3px; width: 0%; transition: width 0.1s; }}
+                        .time-display {{ font-size: 12px; color: #666; min-width: 80px; text-align: right; }}
+                        .file-caption {{ font-size: 12px; color: #666; margin-top: 5px; }}
+                        #masterAudio {{ display: none; }}
+                    </style>
+                </head>
+                <body>
+                    <div id="practiceContainer"></div>
+                    
+                    <script>
+                        const sentences = {sentences_json};
+                        // Access global master audio - try multiple levels up the window hierarchy
+                        const masterAudio = (window.parent.parent && window.parent.parent.globalMasterAudio) || 
+                                           (window.parent && window.parent.globalMasterAudio) || 
+                                           (window.top && window.top.globalMasterAudio);
+                        let currentPlayingIdx = -1;
+                        let snippetInterval = null;
                         
-                        # Card header
-                        st.markdown(f"##### {difficulty_emoji} Sentence #{idx+1} - {difficulty_label}")
+                        function formatTime(seconds) {{
+                            const mins = Math.floor(seconds / 60);
+                            const secs = Math.floor(seconds % 60);
+                            return mins + ':' + (secs < 10 ? '0' : '') + secs;
+                        }}
                         
-                        # Translation (always visible)
-                        st.info(f"🌐 **Translation**\n\n{row['translation']}")
+                        function formatTimestamp(seconds) {{
+                            if (!seconds || seconds === 'nan' || seconds === '') return '--';
+                            const total = parseFloat(seconds);
+                            if (isNaN(total) || total < 0) return '--';
+                            const mins = Math.floor(total / 60);
+                            const secs = (total - mins * 60).toFixed(2);
+                            return String(mins).padStart(2, '0') + ':' + String(secs).padStart(5, '0');
+                        }}
                         
-                        # Hint
-                        st.caption("💡 Try to recall the original sentence before revealing!")
+                        function toggleReveal(idx) {{
+                            const content = document.getElementById(`reveal-${{idx}}`);
+                            content.classList.toggle('show');
+                        }}
                         
-                        # Metrics in compact format
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Length", f"{int(row['sl'])} words")
-                            st.metric("RH1", f"{row['rh1']:.2f}")
-                        with col2:
-                            st.metric("RH2", f"{row['rh2']:.2f}")
-                            st.metric("RH Avg", f"{row['rh_avg']:.2f}")
-                        
-                        # Timestamps
-                        start_label = format_timestamp(row.get('start_time'))
-                        end_label = format_timestamp(row.get('end_time'))
-                        if start_label != "--" or end_label != "--":
-                            st.caption(f"⏱️ {start_label} → {end_label}")
-                        
-                        # Reveal answer section
-                        with st.expander("👁️ Reveal Answer", expanded=False):
-                            st.markdown(f"**Original Sentence:**\n\n{row['sentence']}")
+                        function updateProgress(idx, startTime, endTime) {{
+                            if (!masterAudio || endTime <= startTime) return;
+                            const currentTime = masterAudio.currentTime;
+                            const duration = endTime - startTime;
+                            const elapsed = Math.max(0, Math.min(currentTime - startTime, duration));
+                            const progress = (elapsed / duration) * 100;
                             
-                            # Transliteration if available
-                            if row.get('transliteration') and pd.notna(row['transliteration']):
-                                st.markdown(f"**Transliteration:**\n\n{row['transliteration']}")
-                            
-                            # Audio playback
-                            st.markdown("**Audio:**")
-                            render_audio_player(row)
-                            st.caption(f"📁 {Path(row['audio_file']).name}")
+                            const progressBar = document.getElementById(`progress-${{idx}}`);
+                            const timeDisplay = document.getElementById(`time-${{idx}}`);
+                            if (progressBar) progressBar.style.width = progress + '%';
+                            if (timeDisplay) timeDisplay.textContent = formatTime(elapsed) + ' / ' + formatTime(duration);
+                        }}
                         
-                        st.divider()
+                        function togglePlayPause(idx, startTime, endTime) {{
+                            if (currentPlayingIdx === idx) {{
+                                pauseAudio(idx);
+                            }} else {{
+                                if (currentPlayingIdx !== -1) pauseAudio(currentPlayingIdx);
+                                playAudio(idx, startTime, endTime);
+                            }}
+                        }}
+                        
+                        function playAudio(idx, startTime, endTime) {{
+                            if (!masterAudio) return;
+                            
+                            if (masterAudio.currentTime < startTime || masterAudio.currentTime >= endTime) {{
+                                masterAudio.currentTime = startTime;
+                            }}
+                            
+                            masterAudio.play();
+                            currentPlayingIdx = idx;
+                            const btn = document.getElementById(`play-btn-${{idx}}`);
+                            if (btn) btn.textContent = '⏸️';
+                            
+                            if (snippetInterval) clearInterval(snippetInterval);
+                            
+                            snippetInterval = setInterval(() => {{
+                                updateProgress(idx, startTime, endTime);
+                                if (masterAudio.currentTime >= endTime) {{
+                                    pauseAudio(idx);
+                                    masterAudio.currentTime = startTime;
+                                    updateProgress(idx, startTime, endTime);
+                                }}
+                            }}, 50);
+                        }}
+                        
+                        function pauseAudio(idx) {{
+                            if (!masterAudio) return;
+                            masterAudio.pause();
+                            currentPlayingIdx = -1;
+                            const btn = document.getElementById(`play-btn-${{idx}}`);
+                            if (btn) btn.textContent = '▶️';
+                            if (snippetInterval) {{
+                                clearInterval(snippetInterval);
+                                snippetInterval = null;
+                            }}
+                        }}
+                        
+                        function seekAudio(event, idx, startTime, endTime) {{
+                            if (!masterAudio || endTime <= startTime) return;
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const clickX = event.clientX - rect.left;
+                            const percentage = clickX / rect.width;
+                            const duration = endTime - startTime;
+                            const newTime = startTime + (duration * percentage);
+                            masterAudio.currentTime = Math.max(startTime, Math.min(newTime, endTime));
+                            updateProgress(idx, startTime, endTime);
+                        }}
+                        
+                        function escapeHtml(text) {{
+                            const div = document.createElement('div');
+                            div.textContent = text;
+                            return div.innerHTML;
+                        }}
+                        
+                        // Render all practice cards
+                        const container = document.getElementById('practiceContainer');
+                        sentences.forEach((s, idx) => {{
+                            const card = document.createElement('div');
+                            card.className = 'practice-card';
+                            
+                            let html = `
+                                <div class="card-header">${{s.difficulty_emoji}} Sentence #${{idx + 1}} - ${{s.difficulty_label}}</div>
+                                <div class="translation-box">
+                                    <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">🌐 Translation</div>
+                                    <div class="translation-text">${{escapeHtml(s.translation)}}</div>
+                                </div>
+                                <div class="hint">💡 Try to recall the original sentence before revealing!</div>
+                                
+                                <div class="metrics-compact">
+                                    <div class="metric-box">
+                                        <div class="metric-label">Length</div>
+                                        <div class="metric-value">${{s.sl}} words</div>
+                                    </div>
+                                    <div class="metric-box">
+                                        <div class="metric-label">RH Avg</div>
+                                        <div class="metric-value">${{s.rh_avg.toFixed(2)}}</div>
+                                    </div>
+                                    <div class="metric-box">
+                                        <div class="metric-label">RH1</div>
+                                        <div class="metric-value">${{s.rh1.toFixed(2)}}</div>
+                                    </div>
+                                    <div class="metric-box">
+                                        <div class="metric-label">RH2</div>
+                                        <div class="metric-value">${{s.rh2.toFixed(2)}}</div>
+                                    </div>
+                                </div>
+                            `;
+                            
+                            const startLabel = formatTimestamp(s.start_time_sec);
+                            const endLabel = formatTimestamp(s.end_time_sec);
+                            if (startLabel !== '--' || endLabel !== '--') {{
+                                html += `<div class="timestamp">⏱️ ${{startLabel}} → ${{endLabel}}</div>`;
+                            }}
+                            
+                            html += `
+                                <div class="reveal-section">
+                                    <button class="reveal-btn" onclick="toggleReveal(${{idx}})">👁️ Reveal Answer</button>
+                                    <div class="reveal-content" id="reveal-${{idx}}">
+                                        <div class="section-label">Original Sentence:</div>
+                                        <div class="answer-text">${{escapeHtml(s.sentence)}}</div>
+                            `;
+                            
+                            if (s.transliteration) {{
+                                html += `
+                                    <div class="section-label" style="margin-top: 15px;">Transliteration:</div>
+                                    <div class="answer-text">${{escapeHtml(s.transliteration)}}</div>
+                                `;
+                            }}
+                            
+                            if (s.audio_link && masterAudio) {{
+                                const duration = s.end_time_sec - s.start_time_sec;
+                                const formattedDuration = formatTime(duration);
+                                html += `
+                                    <div class="section-label" style="margin-top: 15px;">Audio:</div>
+                                    <div class="audio-section">
+                                        <div class="custom-audio-controls">
+                                            <button class="play-pause-btn" id="play-btn-${{idx}}" onclick="togglePlayPause(${{idx}}, ${{s.start_time_sec}}, ${{s.end_time_sec}})">▶️</button>
+                                            <div class="progress-container" onclick="seekAudio(event, ${{idx}}, ${{s.start_time_sec}}, ${{s.end_time_sec}})">
+                                                <div class="progress-bar" id="progress-${{idx}}"></div>
+                                            </div>
+                                            <div class="time-display" id="time-${{idx}}">0:00 / ${{formattedDuration}}</div>
+                                        </div>
+                                        <div class="file-caption">📁 ${{s.audio_file.split('/').pop().split('\\\\').pop()}}</div>
+                                    </div>
+                                `;
+                            }}
+                            
+                            html += `
+                                    </div>
+                                </div>
+                            `;
+                            
+                            card.innerHTML = html;
+                            container.appendChild(card);
+                        }});
+                    </script>
+                </body>
+                </html>
+                """
+                
+                components.html(practice_html, height=800, scrolling=True)
     
     else:
         st.info("👈 Load results from the **Load Results** tab to start practicing!")
@@ -1210,229 +1352,613 @@ with tab5:
     if not (st.session_state.processing_complete and st.session_state.processed_results):
         st.warning("⚠️ Please load or process a results CSV before annotating.")
     else:
-        # Initialize navigation index in session state
-        if 'current_annotation_idx' not in st.session_state:
-            st.session_state.current_annotation_idx = 0
-        
-        # Initialize temporary rating storage (prevents rerun on slider change)
-        if 'temp_rating' not in st.session_state:
-            st.session_state.temp_rating = {}
-        
-        # Use shared DataFrame reference (avoids redundant copies)
+        # Use shared DataFrame reference
         anno_df = ensure_results_df()
-
-        total_sentences = len(anno_df)
-        annotated_count = len(st.session_state.sentence_annotations)
         
-        if total_sentences == 0:
+        if len(anno_df) == 0:
             st.info("No sentences available to annotate.")
         else:
-            # Get current index
-            current_idx = st.session_state.current_annotation_idx
+            # Prepare data for JavaScript
+            import json
             
-            # Ensure index is within bounds
-            if current_idx >= total_sentences:
-                current_idx = total_sentences - 1
-                st.session_state.current_annotation_idx = current_idx
+            sentences_data = []
+            for idx, row in enumerate(anno_df.itertuples()):
+                sentence_obj = {
+                    'idx': idx,
+                    'sentence': str(row.sentence),
+                    'translation': str(getattr(row, 'translation', '')) if pd.notna(getattr(row, 'translation', None)) else '',
+                    'transliteration': str(getattr(row, 'transliteration', '')) if pd.notna(getattr(row, 'transliteration', None)) else '',
+                    'rh_avg': float(row.rh_avg),
+                    'sl': int(row.sl),
+                    'start_time': format_timestamp(getattr(row, 'start_time', None)),
+                    'end_time': format_timestamp(getattr(row, 'end_time', None)),
+                    'audio_link': st.session_state.get('audio_file_link', ''),
+                    'start_time_sec': float(getattr(row, 'start_time', 0)) if pd.notna(getattr(row, 'start_time', None)) else 0,
+                    'end_time_sec': float(getattr(row, 'end_time', 0)) if pd.notna(getattr(row, 'end_time', None)) else 0,
+                }
+                sentences_data.append(sentence_obj)
             
-            # Progress bar at top (static, doesn't need fragment)
-            progress_pct = (annotated_count / total_sentences) if total_sentences else 0
-            st.progress(progress_pct, text=f"Progress: {annotated_count}/{total_sentences} sentences ({progress_pct*100:.1f}%)")
+            annotations_data = {}
+            for idx, anno in st.session_state.sentence_annotations.items():
+                annotations_data[str(idx)] = {
+                    'rating': anno.get('rating', 0),
+                    'notes': anno.get('notes', ''),
+                    'timestamp': str(anno.get('timestamp', ''))
+                }
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total", total_sentences)
-            with col2:
-                st.metric("Annotated", annotated_count)
-            with col3:
-                st.metric("Remaining", total_sentences - annotated_count)
-
-            st.divider()
-
-            # Main annotation area wrapped in a fragment for instant updates
-            @st.fragment
-            def render_annotation_section():
-                current_idx = st.session_state.current_annotation_idx
-                current_row = anno_df.iloc[current_idx]
-                
-                # Local preset save function within fragment scope
-                def local_preset_save(rating_value: int):
-                    """Quick save for preset buttons within fragment"""
-                    notes = st.session_state.get(f'notes_{current_idx}', '')
-                    if rating_value == 0:
-                        notes = "Needs review"
-                    save_annotation(current_idx, rating_value, notes, move_next=True, total_sentences=total_sentences)
-                
-                # Navigation callbacks (no rerun needed)
-                def nav_first():
-                    st.session_state.current_annotation_idx = 0
-                    st.session_state.temp_rating.pop(current_idx, None)
-                
-                def nav_prev():
-                    st.session_state.current_annotation_idx = max(0, st.session_state.current_annotation_idx - 1)
-                    st.session_state.temp_rating.pop(current_idx, None)
-                
-                def nav_next():
-                    st.session_state.current_annotation_idx = min(total_sentences - 1, st.session_state.current_annotation_idx + 1)
-                    st.session_state.temp_rating.pop(current_idx, None)
-                
-                def nav_last():
-                    st.session_state.current_annotation_idx = total_sentences - 1
-                    st.session_state.temp_rating.pop(current_idx, None)
-                
-                def nav_unannotated():
-                    curr = st.session_state.current_annotation_idx
-                    found = False
-                    for i in range(curr + 1, total_sentences):
-                        if i not in st.session_state.sentence_annotations:
-                            st.session_state.current_annotation_idx = i
-                            found = True
-                            break
-                    if not found:
-                        for i in range(0, curr):
-                            if i not in st.session_state.sentence_annotations:
-                                st.session_state.current_annotation_idx = i
-                                found = True
-                                break
-                    st.session_state.temp_rating.pop(curr, None)
-
-                # Navigation buttons
-                nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
-                
-                with nav_col1:
-                    st.button("⏮️ First", use_container_width=True, disabled=(current_idx == 0), on_click=nav_first, key=f"btn_first_{current_idx}")
-                
-                with nav_col2:
-                    st.button("◀️ Previous", use_container_width=True, disabled=(current_idx == 0), on_click=nav_prev, key=f"btn_prev_{current_idx}")
-                
-                with nav_col3:
-                    st.button("▶️ Next", use_container_width=True, disabled=(current_idx >= total_sentences - 1), on_click=nav_next, key=f"btn_next_{current_idx}")
-                
-                with nav_col4:
-                    st.button("⏭️ Last", use_container_width=True, disabled=(current_idx >= total_sentences - 1), on_click=nav_last, key=f"btn_last_{current_idx}")
-                
-                with nav_col5:
-                    st.button("🎯 Next Unannotated", use_container_width=True, on_click=nav_unannotated, key=f"btn_unannotated_{current_idx}")
-
-                st.divider()
-
-                # Display current sentence
-                status_emoji = "✅" if current_idx in st.session_state.sentence_annotations else "⭕"
-                st.subheader(f"{status_emoji} Sentence {current_idx + 1} of {total_sentences}")
-                st.markdown(f"""
-                <div style="padding: 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                            border-radius: 15px; margin: 20px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                    <h2 style="margin: 0; color: white; font-size: 28px; line-height: 1.6;">
-                        {html.escape(current_row['sentence'])}
-                    </h2>
+            sentences_json = json.dumps(sentences_data)
+            annotations_json = json.dumps(annotations_data)
+            
+            total_sentences = len(sentences_data)
+            annotated_count = len(st.session_state.sentence_annotations)
+            
+            # Create JavaScript-based annotation interface
+            annotation_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    * {{
+                        box-sizing: border-box;
+                        margin: 0;
+                        padding: 0;
+                    }}
+                    body {{
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        padding: 10px;
+                        background: #f0f2f6;
+                    }}
+                    .container {{
+                        max-width: 1200px;
+                        margin: 0 auto;
+                    }}
+                    .nav-buttons {{
+                        display: grid;
+                        grid-template-columns: repeat(5, 1fr);
+                        gap: 10px;
+                        margin-bottom: 20px;
+                    }}
+                    .btn {{
+                        padding: 10px 16px;
+                        border: none;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 14px;
+                        font-weight: 500;
+                        transition: all 0.2s;
+                        background: white;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                    }}
+                    .btn:hover:not(:disabled) {{
+                        transform: translateY(-1px);
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+                    }}
+                    .btn:disabled {{
+                        opacity: 0.5;
+                        cursor: not-allowed;
+                    }}
+                    .sentence-card {{
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 30px;
+                        border-radius: 15px;
+                        margin: 20px 0;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                    }}
+                    .sentence-text {{
+                        color: white;
+                        font-size: 28px;
+                        line-height: 1.6;
+                        margin: 0;
+                    }}
+                    .info-grid {{
+                        display: grid;
+                        grid-template-columns: repeat(3, 1fr);
+                        gap: 15px;
+                        margin: 20px 0;
+                    }}
+                    .info-box {{
+                        background: white;
+                        padding: 15px;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    }}
+                    .info-label {{
+                        font-weight: 600;
+                        color: #666;
+                        margin-bottom: 8px;
+                        font-size: 14px;
+                    }}
+                    .info-content {{
+                        color: #333;
+                        line-height: 1.5;
+                    }}
+                    .rating-buttons {{
+                        display: grid;
+                        grid-template-columns: repeat(4, 1fr);
+                        gap: 10px;
+                        margin: 20px 0;
+                    }}
+                    .rating-btn {{
+                        padding: 15px;
+                        border: none;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        font-weight: 600;
+                        transition: all 0.2s;
+                    }}
+                    .rating-easy {{
+                        background: #10b981;
+                        color: white;
+                    }}
+                    .rating-medium {{
+                        background: #f59e0b;
+                        color: white;
+                    }}
+                    .rating-hard {{
+                        background: #ef4444;
+                        color: white;
+                    }}
+                    .rating-review {{
+                        background: #6b7280;
+                        color: white;
+                    }}
+                    .rating-btn:hover {{
+                        transform: scale(1.05);
+                    }}
+                    .fine-tune {{
+                        background: white;
+                        padding: 20px;
+                        border-radius: 8px;
+                        margin: 20px 0;
+                        display: none;
+                    }}
+                    .fine-tune.show {{
+                        display: block;
+                    }}
+                    .toggle-btn {{
+                        width: 100%;
+                        padding: 12px;
+                        background: #3b82f6;
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 14px;
+                        font-weight: 600;
+                        margin-bottom: 15px;
+                    }}
+                    .input-group {{
+                        margin: 15px 0;
+                    }}
+                    .input-group label {{
+                        display: block;
+                        margin-bottom: 5px;
+                        font-weight: 600;
+                        color: #333;
+                    }}
+                    .input-group input, .input-group textarea {{
+                        width: 100%;
+                        padding: 10px;
+                        border: 1px solid #ddd;
+                        border-radius: 6px;
+                        font-size: 14px;
+                    }}
+                    .status-indicator {{
+                        display: inline-block;
+                        padding: 6px 12px;
+                        border-radius: 4px;
+                        font-size: 14px;
+                        font-weight: 600;
+                        margin-bottom: 10px;
+                    }}
+                    .status-annotated {{
+                        background: #d1fae5;
+                        color: #065f46;
+                    }}
+                    .status-unannotated {{
+                        background: #fee2e2;
+                        color: #991b1b;
+                    }}
+                    .audio-player {{
+                        margin: 15px 0;
+                        padding: 15px;
+                        background: #f9fafb;
+                        border-radius: 8px;
+                    }}
+                    .custom-audio-controls {{
+                        display: flex;
+                        align-items: center;
+                        gap: 15px;
+                        margin-top: 10px;
+                    }}
+                    .play-pause-btn {{
+                        width: 50px;
+                        height: 50px;
+                        border-radius: 50%;
+                        border: none;
+                        background: #3b82f6;
+                        color: white;
+                        font-size: 20px;
+                        cursor: pointer;
+                        transition: all 0.2s;
+                    }}
+                    .play-pause-btn:hover {{
+                        background: #2563eb;
+                        transform: scale(1.05);
+                    }}
+                    .progress-container {{
+                        flex: 1;
+                        height: 8px;
+                        background: #e5e7eb;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        position: relative;
+                    }}
+                    .progress-bar {{
+                        height: 100%;
+                        background: #3b82f6;
+                        border-radius: 4px;
+                        width: 0%;
+                        transition: width 0.1s;
+                    }}
+                    .time-display {{
+                        font-size: 14px;
+                        color: #666;
+                        min-width: 100px;
+                        text-align: right;
+                    }}
+                    #masterAudio {{
+                        display: none;
+                    }}
+                    .save-info {{
+                        background: #eff6ff;
+                        padding: 10px;
+                        border-radius: 6px;
+                        margin-top: 10px;
+                        font-size: 13px;
+                        color: #1e40af;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="nav-buttons">
+                        <button class="btn" onclick="goFirst()" id="btnFirst">⏮️ First</button>
+                        <button class="btn" onclick="goPrev()" id="btnPrev">◀️ Previous</button>
+                        <button class="btn" onclick="goNext()" id="btnNext">▶️ Next</button>
+                        <button class="btn" onclick="goLast()" id="btnLast">⏭️ Last</button>
+                        <button class="btn" onclick="goUnannotated()">🎯 Next Unannotated</button>
+                    </div>
+                    
+                    <div id="sentenceDisplay"></div>
+                    
+                    <div class="info-grid" id="infoGrid"></div>
+                    
+                    <div class="audio-player" id="audioContainer" style="display:none;">
+                        <div class="info-label">🔊 Audio Playback</div>
+                        <div class="custom-audio-controls">
+                            <button class="play-pause-btn" id="playPauseBtn" onclick="togglePlayPause()">▶️</button>
+                            <div class="progress-container" id="progressContainer" onclick="seekAudio(event)">
+                                <div class="progress-bar" id="progressBar"></div>
+                            </div>
+                            <div class="time-display" id="timeDisplay">0:00 / 0:00</div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <div class="input-group">
+                            <label>Rating (1-10):</label>
+                            <input type="number" id="ratingInput" min="1" max="10" value="5">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-top: 15px;">
+                            <button class="btn" style="background: #3b82f6; color: white;" onclick="saveAndNext()">💾 Save & Next</button>
+                            <button class="btn" style="background: #10b981; color: white;" onclick="save()">💾 Save</button>
+                            <button class="btn" style="background: #ef4444; color: white;" onclick="clearAnnotation()">🗑️ Clear</button>
+                        </div>
+                    </div>
+                    
+                    <div class="save-info" id="saveInfo" style="display:none;"></div>
                 </div>
-                """, unsafe_allow_html=True)
-
-                info_cols = st.columns(3)
-                with info_cols[0]:
-                    if current_row.get('translation') and pd.notna(current_row['translation']):
-                        st.info(f"🌐 **Translation**\n\n{current_row['translation']}")
-                with info_cols[1]:
-                    if current_row.get('transliteration') and pd.notna(current_row['transliteration']):
-                        st.info(f"🔤 **Transliteration**\n\n{current_row['transliteration']}")
-                with info_cols[2]:
-                    st.info(f"""📊 **Computed Metrics**
-                    
-- **RH Avg:** {current_row['rh_avg']:.1f}
-- **Length:** {int(current_row['sl'])} words
-- **Time:** {format_timestamp(current_row.get('start_time'))} → {format_timestamp(current_row.get('end_time'))}
-                    """)
-
-                # Audio player (always loaded, no button needed)
-                with st.expander("🔊 Listen to Audio", expanded=False):
-                    render_audio_player(current_row)
-
-                st.divider()
-
-                existing_annotation = st.session_state.sentence_annotations.get(current_idx, {})
-                default_rating = existing_annotation.get('rating', 5)
-                default_notes = existing_annotation.get('notes', '')
-                current_rating = st.session_state.temp_rating.get(current_idx, default_rating)
                 
-                st.markdown("**⚡ Quick Rate & Next:**")
-                preset_cols = st.columns(4)
-                with preset_cols[0]:
-                    if st.button("🟢 Easy (3)", use_container_width=True, key=f"preset_easy_{current_idx}"):
-                        local_preset_save(3)
-                        st.rerun(scope="fragment")
-                with preset_cols[1]:
-                    if st.button("🟡 Medium (5)", use_container_width=True, key=f"preset_medium_{current_idx}"):
-                        local_preset_save(5)
-                        st.rerun(scope="fragment")
-                with preset_cols[2]:
-                    if st.button("🟠 Hard (8)", use_container_width=True, key=f"preset_hard_{current_idx}"):
-                        local_preset_save(8)
-                        st.rerun(scope="fragment")
-                with preset_cols[3]:
-                    if st.button("❓ Review (0)", use_container_width=True, key=f"preset_review_{current_idx}"):
-                        local_preset_save(0)
-                        st.rerun(scope="fragment")
-
-                st.divider()
-
-                with st.expander("🎚️ Fine-tune Rating (Optional)", expanded=False):
-                    rating_value = st.number_input(
-                        "Detailed Rating (1-10)",
-                        min_value=1,
-                        max_value=10,
-                        value=int(current_rating),
-                        step=1,
-                        help="Enter a difficulty rating from 1 (easiest) to 10 (hardest)",
-                        key=f'rating_{current_idx}'
-                    )
+                <script>
+                    const sentences = {sentences_json};
+                    const annotations = {annotations_json};
+                    let currentIdx = 0;
                     
-                    # Update temp rating directly without callback
-                    st.session_state.temp_rating[current_idx] = rating_value
-
-                    if rating_value <= 3:
-                        st.success(f"🟢 Easy (Rating: {rating_value}/10)")
-                    elif rating_value <= 6:
-                        st.warning(f"🟡 Medium (Rating: {rating_value}/10)")
-                    elif rating_value <= 8:
-                        st.error(f"🟠 Hard (Rating: {rating_value}/10)")
-                    else:
-                        st.error(f"🔴 Very Hard (Rating: {rating_value}/10)")
-
-                    notes = st.text_area(
-                        "Notes (optional)",
-                        value=default_notes,
-                        placeholder="Add context, vocabulary issues, pronunciation notes...",
-                        height=100,
-                        key=f'notes_{current_idx}'
-                    )
-
-                    detail_col1, detail_col2, detail_col3 = st.columns([2, 1, 1])
-                    with detail_col1:
-                        if st.button("💾 Save & Next", type="primary", use_container_width=True, key=f"save_next_{current_idx}"):
-                            save_annotation(current_idx, rating_value, notes, move_next=True, total_sentences=total_sentences)
-                            st.rerun(scope="fragment")
-                    with detail_col2:
-                        if st.button("💾 Save", use_container_width=True, key=f"save_{current_idx}"):
-                            save_annotation(current_idx, rating_value, notes, move_next=False, total_sentences=total_sentences)
-                            st.rerun(scope="fragment")
-                    with detail_col3:
-                        if st.button("🗑️ Clear", use_container_width=True, key=f"clear_{current_idx}"):
-                            st.session_state.sentence_annotations.pop(current_idx, None)
-                            st.session_state.temp_rating.pop(current_idx, None)
-                            st.rerun(scope="fragment")
-
-                if current_idx in st.session_state.sentence_annotations:
-                    anno = st.session_state.sentence_annotations[current_idx]
-                    timestamp = anno.get('timestamp', 'Unknown')
-                    st.caption(f"✏️ Last saved: Rating {anno.get('rating')}/10 at {timestamp}")
+                    // Master audio element and playback state - use global master audio
+                    // Access global master audio - try multiple levels up the window hierarchy
+                    const masterAudio = (window.parent.parent && window.parent.parent.globalMasterAudio) || 
+                                       (window.parent && window.parent.globalMasterAudio) || 
+                                       (window.top && window.top.globalMasterAudio);
+                    let currentStartTime = 0;
+                    let currentEndTime = 0;
+                    let snippetInterval = null;
+                    let isPlaying = false;
+                    
+                    // Update progress bar and time display
+                    function updateProgress() {{
+                        if (!masterAudio || currentEndTime <= currentStartTime) return;
+                        
+                        const currentTime = masterAudio.currentTime;
+                        const duration = currentEndTime - currentStartTime;
+                        const elapsed = Math.max(0, Math.min(currentTime - currentStartTime, duration));
+                        const progress = (elapsed / duration) * 100;
+                        
+                        document.getElementById('progressBar').style.width = progress + '%';
+                        
+                        const formatTime = (seconds) => {{
+                            const mins = Math.floor(seconds / 60);
+                            const secs = Math.floor(seconds % 60);
+                            return mins + ':' + (secs < 10 ? '0' : '') + secs;
+                        }};
+                        
+                        document.getElementById('timeDisplay').textContent = 
+                            formatTime(elapsed) + ' / ' + formatTime(duration);
+                    }}
+                    
+                    // Play/Pause toggle
+                    function togglePlayPause() {{
+                        if (isPlaying) {{
+                            pauseAudio();
+                        }} else {{
+                            playAudio();
+                        }}
+                    }}
+                    
+                    // Play audio snippet
+                    function playAudio() {{
+                        if (!masterAudio) return;
+                        
+                        // Set to start time if outside the snippet range
+                        if (masterAudio.currentTime < currentStartTime || masterAudio.currentTime >= currentEndTime) {{
+                            masterAudio.currentTime = currentStartTime;
+                        }}
+                        
+                        masterAudio.play();
+                        isPlaying = true;
+                        document.getElementById('playPauseBtn').textContent = '⏸️';
+                        
+                        // Clear any existing interval
+                        if (snippetInterval) {{
+                            clearInterval(snippetInterval);
+                        }}
+                        
+                        // Monitor playback and stop at end time
+                        snippetInterval = setInterval(() => {{
+                            updateProgress();
+                            
+                            if (masterAudio.currentTime >= currentEndTime) {{
+                                pauseAudio();
+                                masterAudio.currentTime = currentStartTime;
+                                updateProgress();
+                            }}
+                        }}, 50);
+                    }}
+                    
+                    // Pause audio
+                    function pauseAudio() {{
+                        if (!masterAudio) return;
+                        
+                        masterAudio.pause();
+                        isPlaying = false;
+                        document.getElementById('playPauseBtn').textContent = '▶️';
+                        
+                        if (snippetInterval) {{
+                            clearInterval(snippetInterval);
+                            snippetInterval = null;
+                        }}
+                    }}
+                    
+                    // Seek in audio
+                    function seekAudio(event) {{
+                        if (!masterAudio || currentEndTime <= currentStartTime) return;
+                        
+                        const progressContainer = document.getElementById('progressContainer');
+                        const rect = progressContainer.getBoundingClientRect();
+                        const clickX = event.clientX - rect.left;
+                        const percentage = clickX / rect.width;
+                        
+                        const duration = currentEndTime - currentStartTime;
+                        const newTime = currentStartTime + (duration * percentage);
+                        
+                        masterAudio.currentTime = Math.max(currentStartTime, Math.min(newTime, currentEndTime));
+                        updateProgress();
+                    }}
+                    
+                    // Load snippet for current sentence
+                    function loadAudioSnippet(startTime, endTime) {{
+                        currentStartTime = startTime;
+                        currentEndTime = endTime;
+                        
+                        // Reset playback state
+                        pauseAudio();
+                        masterAudio.currentTime = startTime;
+                        updateProgress();
+                    }}
+                    
+                    function render() {{
+                        if (sentences.length === 0) return;
+                        
+                        const sentence = sentences[currentIdx];
+                        const annotation = annotations[currentIdx] || {{}};
+                        
+                        // Update navigation buttons
+                        document.getElementById('btnFirst').disabled = currentIdx === 0;
+                        document.getElementById('btnPrev').disabled = currentIdx === 0;
+                        document.getElementById('btnNext').disabled = currentIdx >= sentences.length - 1;
+                        document.getElementById('btnLast').disabled = currentIdx >= sentences.length - 1;
+                        
+                        // Status indicator
+                        const status = annotations[currentIdx] ? 
+                            '<span class="status-annotated">✅ Annotated</span>' :
+                            '<span class="status-unannotated">⭕ Not Annotated</span>';
+                        
+                        // Sentence display
+                        document.getElementById('sentenceDisplay').innerHTML = `
+                            <div style="margin-bottom: 10px;">
+                                ${{status}}
+                                <span style="margin-left: 10px; font-weight: 600;">Sentence ${{currentIdx + 1}} of ${{sentences.length}}</span>
+                            </div>
+                            <div class="sentence-card">
+                                <h2 class="sentence-text">${{escapeHtml(sentence.sentence)}}</h2>
+                            </div>
+                        `;
+                        
+                        // Info grid
+                        let infoHTML = '';
+                        if (sentence.translation) {{
+                            infoHTML += `
+                                <div class="info-box">
+                                    <div class="info-label">🌐 Translation</div>
+                                    <div class="info-content">${{escapeHtml(sentence.translation)}}</div>
+                                </div>
+                            `;
+                        }}
+                        if (sentence.transliteration) {{
+                            infoHTML += `
+                                <div class="info-box">
+                                    <div class="info-label">🔤 Transliteration</div>
+                                    <div class="info-content">${{escapeHtml(sentence.transliteration)}}</div>
+                                </div>
+                            `;
+                        }}
+                        infoHTML += `
+                            <div class="info-box">
+                                <div class="info-label">📊 Metrics</div>
+                                <div class="info-content">
+                                    RH Avg: ${{sentence.rh_avg.toFixed(1)}}<br>
+                                    Length: ${{sentence.sl}} words<br>
+                                    Time: ${{sentence.start_time}} → ${{sentence.end_time}}
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('infoGrid').innerHTML = infoHTML;
+                        
+                        // Audio player - load snippet times
+                        if (sentence.audio_link && masterAudio) {{
+                            document.getElementById('audioContainer').style.display = 'block';
+                            loadAudioSnippet(sentence.start_time_sec, sentence.end_time_sec);
+                        }} else {{
+                            document.getElementById('audioContainer').style.display = 'none';
+                        }}
+                        
+                        // Load existing annotation
+                        if (annotation.rating) {{
+                            document.getElementById('ratingInput').value = annotation.rating;
+                            document.getElementById('saveInfo').innerHTML = `✏️ Last saved: Rating ${{annotation.rating}}/10 at ${{annotation.timestamp}}`;
+                            document.getElementById('saveInfo').style.display = 'block';
+                        }} else {{
+                            document.getElementById('ratingInput').value = 5;
+                            document.getElementById('saveInfo').style.display = 'none';
+                        }}
+                    }}
+                    
+                    function escapeHtml(text) {{
+                        const div = document.createElement('div');
+                        div.textContent = text;
+                        return div.innerHTML;
+                    }}
+                    
+                    function goFirst() {{
+                        currentIdx = 0;
+                        render();
+                    }}
+                    
+                    function goPrev() {{
+                        if (currentIdx > 0) {{
+                            currentIdx--;
+                            render();
+                        }}
+                    }}
+                    
+                    function goNext() {{
+                        if (currentIdx < sentences.length - 1) {{
+                            currentIdx++;
+                            render();
+                        }}
+                    }}
+                    
+                    function goLast() {{
+                        currentIdx = sentences.length - 1;
+                        render();
+                    }}
+                    
+                    function goUnannotated() {{
+                        let found = false;
+                        for (let i = currentIdx + 1; i < sentences.length; i++) {{
+                            if (!annotations[i]) {{
+                                currentIdx = i;
+                                found = true;
+                                break;
+                            }}
+                        }}
+                        if (!found) {{
+                            for (let i = 0; i < currentIdx; i++) {{
+                                if (!annotations[i]) {{
+                                    currentIdx = i;
+                                    found = true;
+                                    break;
+                                }}
+                            }}
+                        }}
+                        render();
+                    }}
+                    
+                    function save() {{
+                        const rating = parseInt(document.getElementById('ratingInput').value);
+                        
+                        annotations[currentIdx] = {{
+                            rating: rating,
+                            notes: '',
+                            timestamp: new Date().toISOString()
+                        }};
+                        
+                        window.parent.postMessage({{
+                            type: 'annotation',
+                            idx: currentIdx,
+                            data: annotations[currentIdx]
+                        }}, '*');
+                        
+                        render();
+                    }}
+                    
+                    function saveAndNext() {{
+                        save();
+                        if (currentIdx < sentences.length - 1) {{
+                            currentIdx++;
+                            render();
+                        }}
+                    }}
+                    
+                    function clearAnnotation() {{
+                        delete annotations[currentIdx];
+                        
+                        window.parent.postMessage({{
+                            type: 'clear_annotation',
+                            idx: currentIdx
+                        }}, '*');
+                        
+                        render();
+                    }}
+                    
+                    // Initial render
+                    render();
+                </script>
+            </body>
+            </html>
+            """
             
-            # Render the fragment (this updates instantly without full page rerun)
-            render_annotation_section()
-
-            # Export section (outside fragment to avoid unnecessary reruns)
+            # Render the HTML component
+            components.html(annotation_html, height=660, scrolling=True)
+            
+            st.divider()
+            
+            # Export and statistics section (shown below the annotation interface)
+            st.subheader("💾 Export & Statistics")
+            st.info("💡 Annotations are saved automatically as you rate. Refresh the page after annotating to see updated counts.")
+            
             if annotated_count > 0:
-                st.divider()
-                st.subheader("💾 Export Annotations")
 
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -1496,31 +2022,6 @@ with tab5:
                     st.write(f"**Sentences with notes:** {with_notes}/{annotated_count}")
             else:
                 st.info("💡 Start annotating to enable export")
-
-            with st.expander("⚡ Speed Tips", expanded=False):
-                st.markdown("""
-                **Fastest Workflow:**
-                1. Read the sentence
-                2. Click a **preset button** (Easy/Medium/Hard) - instantly saves and moves to next
-                3. Repeat!
-                
-                **For Fine-tuning:**
-                - Open "Fine-tune Rating" expander
-                - Enter a number from 1-10
-                - Add notes if needed
-                - Click "Save & Next"
-                
-                **Keyboard-Free Annotation:**
-                - Use only preset buttons for ultra-fast annotation
-                - Avg time per sentence: ~3-5 seconds
-                
-                **Rating Guide:**
-                - **1-3 (Easy)**: Simple vocab, short, clear
-                - **4-6 (Medium)**: Moderate complexity
-                - **7-8 (Hard)**: Complex grammar/vocab
-                - **9-10 (Very Hard)**: Idioms, technical, cultural
-                - **0 (Review)**: Unclear audio, errors
-                """)
         
 with tab6:
     st.header("About This Tool")
