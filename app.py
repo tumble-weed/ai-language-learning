@@ -18,6 +18,7 @@ import io
 import math
 from textwrap import dedent
 import soundfile as sf
+import gdown
 
 # # Import your existing modules
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
@@ -48,6 +49,10 @@ if 'sentence_annotations' not in st.session_state:
     st.session_state.sentence_annotations = {}
 if 'audio_snippets_cache' not in st.session_state:
     st.session_state.audio_snippets_cache = {}
+
+
+
+
 
 
 def ensure_results_df() -> Optional[pd.DataFrame]:
@@ -212,54 +217,86 @@ def extract_audio_clip(audio_data, samplerate: int, start_time: Optional[float],
 def render_audio_player(row: Dict) -> None:
     """Display audio snippet using original audio file if available."""
 
-    # Check if we have the original audio loaded in session state
-    if st.session_state.audio_file_path and st.session_state.audio_file_path.exists():
-        # Load audio data once if not already in session state
-        if 'original_audio_data' not in st.session_state or 'original_audio_samplerate' not in st.session_state:
-            try:
-                data, samplerate = sf.read(str(st.session_state.audio_file_path))
-                st.session_state.original_audio_data = data
-                st.session_state.original_audio_samplerate = samplerate
-            except Exception:
-                st.session_state.original_audio_data = None
-                st.session_state.original_audio_samplerate = None
+    # st.audio(st.session_state.audio_file_path, format='audio/wav', start_time=row.get('start_time'), end_time=row.get('end_time'))
+    # return
+
+    start = row["start_time"]
+    end = row["end_time"]
+
+    safe_id = f"a_{str(start).replace('.', '_')}_{str(end).replace('.', '_')}"
+
+    audio_html = f"""
+    <audio id="{safe_id}" preload="none" src="{st.session_state.audio_file_link}#t={start},{end}" onplay="window.snippetPlayer(this, {start}, {end})" controls ></audio>
+    <script>
+    // 1. Function Guard: Define the global snippetPlayer function only once
+    if (!window.snippetPlayer) {{
+        window.snippetPlayer = function(audio, start, end) {{
+            // console.log("Snippet player invoked:", audio, start, end);
+            if (!audio) return;
+
+            // Clear any previously running interval for this audio element
+            if (audio._snippetInterval) {{
+                clearInterval(audio._snippetInterval);
+            }}
+
+            // Snap to the start time (necessary if user has scrubbed or it's the first play)
+            if (audio.currentTime < start || audio.currentTime >= end) {{
+                audio.currentTime = start;
+            }}
+
+            // 2. Loop/Stop Logic: Set a new interval to monitor current time
+            audio._snippetInterval = setInterval(() => {{
+                if (audio.currentTime >= end) {{
+                    audio.pause();
+                    // Reset to start time for a clean restart if user plays again
+                    audio.currentTime = start;
+                    clearInterval(audio._snippetInterval);
+                }}
+            }}, 50); // Using 50ms for better precision than 100ms
+        }};
+    }}
+    </script>
+    """
+
+    components.html(audio_html, height=80)
+    return
+
+    # Extract clip from cached audio data
+    if st.session_state.original_audio_data is not None:
+        start_time = row.get('start_time')
+        end_time = row.get('end_time')
         
-        # Extract clip from cached audio data
-        if st.session_state.original_audio_data is not None:
-            start_time = row.get('start_time')
-            end_time = row.get('end_time')
-            
-            # Create unique cache key based on start and end times
-            cache_key = f"{start_time}_{end_time}"
-            
-            # Check if snippet is already in cache
-            if cache_key not in st.session_state.audio_snippets_cache:
-                # Extract and cache the snippet
-                snippet = extract_audio_clip(
-                    st.session_state.original_audio_data,
-                    st.session_state.original_audio_samplerate,
-                    start_time,
-                    end_time
-                )
-                st.session_state.audio_snippets_cache[cache_key] = snippet
-            else:
-                # Load from cache
-                snippet = st.session_state.audio_snippets_cache[cache_key]
-            
-            caption_parts = []
-            if st.session_state.audio_file_path:
-                caption_parts.append(st.session_state.audio_file_path.name)
-            if start_time is not None and end_time is not None:
-                try:
-                    caption_parts.append(f"{float(start_time):.2f}s → {float(end_time):.2f}s")
-                except (TypeError, ValueError):
-                    pass
-            caption_text = " | ".join(caption_parts) if caption_parts else "Audio clip"
-            
-            if snippet:
-                st.audio(snippet, format='audio/wav')
-                st.caption(f"📁 {caption_text}")
-                return
+        # Create unique cache key based on start and end times
+        cache_key = f"{start_time}_{end_time}"
+        
+        # Check if snippet is already in cache
+        if cache_key not in st.session_state.audio_snippets_cache:
+            # Extract and cache the snippet
+            snippet = extract_audio_clip(
+                st.session_state.original_audio_data,
+                st.session_state.original_audio_samplerate,
+                start_time,
+                end_time
+            )
+            st.session_state.audio_snippets_cache[cache_key] = snippet
+        else:
+            # Load from cache
+            snippet = st.session_state.audio_snippets_cache[cache_key]
+        
+        caption_parts = []
+        if st.session_state.audio_file_path:
+            caption_parts.append(st.session_state.audio_file_path.name)
+        if start_time is not None and end_time is not None:
+            try:
+                caption_parts.append(f"{float(start_time):.2f}s → {float(end_time):.2f}s")
+            except (TypeError, ValueError):
+                pass
+        caption_text = " | ".join(caption_parts) if caption_parts else "Audio clip"
+        
+        if snippet:
+            st.audio(snippet, format='audio/wav')
+            st.caption(f"📁 {caption_text}")
+            return
     
     st.warning("⚠️ Audio clip not available for this sentence")
 
@@ -524,27 +561,46 @@ with tab1:
             if 'original_audio_file' in df.columns and df['original_audio_file'].notna().any():
                 # Get the first non-null original_audio_file path
                 original_audio_path = df.loc[df['original_audio_file'].notna(), 'original_audio_file'].iloc[0]
-                original_audio_path = Path(original_audio_path)
                 
-                if original_audio_path.exists():
-                    st.session_state.audio_file_path = original_audio_path
+                # Below commented code is used when audio file have local paths (For testing purpose)
+                # original_audio_path = Path(original_audio_path)
+                # if original_audio_path.exists():
+                #     st.session_state.audio_file_path = original_audio_path
                     
-                    # Load the entire audio file into memory
-                    try:
-                        audio_data, samplerate = sf.read(str(original_audio_path))
-                        st.session_state.original_audio_data = audio_data
-                        st.session_state.original_audio_samplerate = samplerate
-                        st.success(f"✅ Loaded original audio file: {original_audio_path.name}")
-                    except Exception as e:
-                        st.warning(f"⚠️ Could not load audio data from {original_audio_path.name}: {str(e)}")
-                        st.session_state.audio_file_path = None
-                        st.session_state.original_audio_data = None
-                        st.session_state.original_audio_samplerate = None
-                else:
-                    st.warning(f"⚠️ Original audio file not found: {original_audio_path}")
-                    st.session_state.audio_file_path = None
-                    st.session_state.original_audio_data = None
-                    st.session_state.original_audio_samplerate = None
+                #     # Load the entire audio file into memory
+                #     try:
+                #         audio_data, samplerate = sf.read(str(original_audio_path))
+                #         st.session_state.original_audio_data = audio_data
+                #         st.session_state.original_audio_samplerate = samplerate
+                #         st.success(f"✅ Loaded original audio file: {original_audio_path.name}")
+                #     except Exception as e:
+                #         st.warning(f"⚠️ Could not load audio data from {original_audio_path.name}: {str(e)}")
+                #         st.session_state.audio_file_path = None
+                #         st.session_state.original_audio_data = None
+                #         st.session_state.original_audio_samplerate = None
+                # else:
+                #     st.warning(f"⚠️ Original audio file not found: {original_audio_path}")
+                #     st.session_state.audio_file_path = None
+                #     st.session_state.original_audio_data = None
+                #     st.session_state.original_audio_samplerate = None
+
+
+                # Below code is to download audio file from google drive URL
+                # with tempfile.TemporaryDirectory() as tempdir:
+
+                #     temp_path = Path(tempdir) / "audio.wav"
+
+                #     gdown.download(original_audio_path, str(temp_path), quiet=False, fuzzy=True)
+
+                #     # Load audio directly from the temp file
+                #     audio_data, samplerate = sf.read(str(temp_path))
+                #     st.session_state.audio_file_path = temp_path
+                #     st.session_state.original_audio_data = audio_data
+                #     st.session_state.original_audio_samplerate = samplerate
+                #     st.success(f"✅ Downloaded and loaded original audio file from URL")
+
+                # Below code is for directly using audio link without downloading
+                st.session_state.audio_file_link = original_audio_path
             else:
                 st.session_state.audio_file_path = None
                 st.session_state.original_audio_data = None

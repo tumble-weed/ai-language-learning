@@ -7,6 +7,7 @@ import os
 # from sentence_alignment.align_sentences import align_sentences_to_timestamps
 # from transliteration.indic_en_trlit import transliterate_indic_to_english
 # from translation.indic_en_translation import translate_indic_to_english
+from utils.rclone_helper import upload_files
 from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 from metrics.wfr import WordFrequencyMetric
 from metrics.sl import SentenceLengthMetric
@@ -27,6 +28,8 @@ SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test5_sentences_output.txt"
 TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_transliteration_output.pkl"
 TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_translation_output.pkl"
 OUTPUT_CSV_FILE = BASE_DIR / "output" / "test5_results.csv"
+
+links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("GOOGLE_DRIVE_AUDIO_FOLDER_ID"))
 
 # Audio segmentation based on silence
 # exported_chunk_paths = segment_dialogue(
@@ -144,7 +147,7 @@ for t in translated_result:
 
     row_data = {
         "Audio_file": t["audio_file"],
-        "Original_audio_file": t["original_audio_file"],
+        "Original_audio_file": links[0] if links else "", # make value to t["original_audio_file"] when using local path
         "Start": t["start"],
         "End": t["end"],
         "Text": t["sentence"],
@@ -178,11 +181,8 @@ try:
 except Exception as e:
     print(f"An error occurred: {e}")
 
-# Use AUDIO_FILE_PATH and OUTPUT_CSV_FILE path to save the audio file and
-# CSV file on rclone
-
-
-
+# Upload CSV file to Google Drive using rclone
+upload_files([str(OUTPUT_CSV_FILE)], os.getenv("GOOGLE_DRIVE_CSV_FOLDER_ID"))
 
 """
 TODO:

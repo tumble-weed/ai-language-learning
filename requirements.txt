@@ -12,3 +12,4 @@ pandas
 indictranstoolkit
 modAL-python
 spacy
+gdown

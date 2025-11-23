@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <audio id="player" src="https://www.dropbox.com/scl/fi/7q8usuctj1jrpmqo6zfuk/test5.wav?rlkey=dd8u2pzjyu8ext350zh3wfxlk&st=hivng2og&raw=1" controls>
+        <source  type="audio/wav">
+                Your browser does not support the audio element.
+    </audio>
+
+    <script>
+    const audio = document.getElementById("player");
+    const start = 4;
+    const end = 6;
+
+    // Always restart at `start` whenever play is pressed
+    audio.onplay = function() {{
+        if (audio.currentTime < start || audio.currentTime > end) {{
+            audio.currentTime = start;
+        }}
+
+        // Force end limit
+        const interval = setInterval(() => {{
+            if (audio.currentTime >= end) {{
+                audio.pause();
+                audio.currentTime = start;
+                clearInterval(interval);
+            }}
+        }}, 100);
+    }};
+    </script>
+</body>
+</html>
