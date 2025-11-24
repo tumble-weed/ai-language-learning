@@ -6,18 +6,12 @@ Provides audio upload, processing pipeline, and interactive results visualizatio
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-import pickle
 from pathlib import Path
 import tempfile
-import shutil
 from typing import List, Dict, Optional
 import os
-import html
-import base64
-import io
 import math
 from textwrap import dedent
-import soundfile as sf
 import dotenv
 from rclone_python import rclone
 
@@ -1434,8 +1428,8 @@ with tab5:
             total_sentences = len(sentences_data)
             annotated_count = len(st.session_state.sentence_annotations)
             
-            # Create JavaScript-based annotation interface
-            annotation_html = f"""
+            # Create unified HTML component with annotation interface AND preview section
+            unified_html = f"""
             <!DOCTYPE html>
             <html>
             <head>
@@ -1450,9 +1444,22 @@ with tab5:
                         padding: 10px;
                         background: #f0f2f6;
                     }}
-                    .container {{
+                    .main-container {{
                         max-width: 1200px;
                         margin: 0 auto;
+                    }}
+                    .annotation-panel {{
+                        background: white;
+                        padding: 20px;
+                        border-radius: 12px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        margin-bottom: 20px;
+                    }}
+                    .preview-panel {{
+                        background: white;
+                        padding: 20px;
+                        border-radius: 12px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
                     }}
                     .nav-buttons {{
                         display: grid;
@@ -1661,10 +1668,73 @@ with tab5:
                         font-size: 13px;
                         color: #1e40af;
                     }}
+                    
+                    /* Preview panel styles */
+                    .preview-header {{
+                        font-size: 18px;
+                        font-weight: 700;
+                        margin-bottom: 15px;
+                        color: #333;
+                    }}
+                    .stats-grid {{
+                        display: grid;
+                        grid-template-columns: 1fr;
+                        gap: 10px;
+                        margin: 15px 0;
+                    }}
+                    .stat-box {{
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 15px;
+                        border-radius: 8px;
+                        color: white;
+                    }}
+                    .stat-label {{
+                        font-size: 12px;
+                        opacity: 0.9;
+                        margin-bottom: 5px;
+                        font-weight: 500;
+                    }}
+                    .stat-value {{
+                        font-size: 24px;
+                        font-weight: 700;
+                    }}
+                    .info-banner {{
+                        background: #eff6ff;
+                        padding: 12px;
+                        border-radius: 6px;
+                        border-left: 4px solid #3b82f6;
+                        margin: 10px 0;
+                        font-size: 13px;
+                        color: #1e40af;
+                    }}
+                    .export-section {{
+                        margin-top: 15px;
+                        padding-top: 15px;
+                        border-top: 2px solid #e5e7eb;
+                    }}
+                    .btn-primary {{
+                        background: #3b82f6;
+                        color: white;
+                    }}
+                    .btn-primary:hover {{
+                        background: #2563eb;
+                    }}
+                    .btn-success {{
+                        background: #10b981;
+                        color: white;
+                    }}
+                    .btn-success:hover {{
+                        background: #059669;
+                    }}
+                    #downloadLink {{
+                        display: none;
+                    }}
                 </style>
             </head>
             <body>
-                <div class="container">
+                <div class="main-container">
+                    <!-- Left Panel: Annotation Interface -->
+                    <div class="annotation-panel">
                     <div class="nav-buttons">
                         <button class="btn" onclick="goFirst()" id="btnFirst">⏮️ First</button>
                         <button class="btn" onclick="goPrev()" id="btnPrev">◀️ Previous</button>
@@ -1700,7 +1770,44 @@ with tab5:
                         </div>
                     </div>
                     
-                    <div class="save-info" id="saveInfo" style="display:none;"></div>
+                        <div class="save-info" id="saveInfo" style="display:none;"></div>
+                    </div>
+                    
+                    <!-- Right Panel: Preview & Export -->
+                    <div class="preview-panel">
+                        <div class="preview-header">💾 Export & Statistics</div>
+                        
+                        <div class="info-banner">
+                            ✨ Updates automatically after each save!
+                        </div>
+                        
+                        <div class="stats-grid">
+                            <div class="stat-box">
+                                <div class="stat-label">Annotated</div>
+                                <div class="stat-value" id="annotatedCount">0</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Avg Rating</div>
+                                <div class="stat-value" id="avgRating">0.0</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Easy/Med/Hard</div>
+                                <div class="stat-value" id="distribution">0/0/0</div>
+                            </div>
+                        </div>
+                        
+                        <div class="export-section">
+                            <button class="btn btn-primary" onclick="prepareExport()" id="prepareBtn">
+                                📥 Prepare CSV Export
+                            </button>
+                            <div id="downloadContainer" style="display: none; margin-top: 10px;">
+                                <button class="btn btn-success" onclick="downloadCSV()" id="downloadBtn">
+                                    ⬇️ Download Annotated CSV
+                                </button>
+                            </div>
+                            <a id="downloadLink" download=""></a>
+                        </div>
+                    </div>
                 </div>
                 
                 <script>
@@ -1710,9 +1817,12 @@ with tab5:
                     
                     // Master audio element and playback state - use global master audio
                     // Access global master audio - try multiple levels up the window hierarchy
-                    const masterAudio = (window.parent.parent && window.parent.parent.globalMasterAudio) || 
-                                       (window.parent && window.parent.globalMasterAudio) || 
-                                       (window.top && window.top.globalMasterAudio);
+                    // Use a getter function to always fetch the latest reference
+                    function getMasterAudio() {{
+                        return (window.parent.parent && window.parent.parent.globalMasterAudio) || 
+                               (window.parent && window.parent.globalMasterAudio) || 
+                               (window.top && window.top.globalMasterAudio);
+                    }}
                     let currentStartTime = 0;
                     let currentEndTime = 0;
                     let snippetInterval = null;
@@ -1720,6 +1830,7 @@ with tab5:
                     
                     // Update progress bar and time display
                     function updateProgress() {{
+                        const masterAudio = getMasterAudio();
                         if (!masterAudio || currentEndTime <= currentStartTime) return;
                         
                         const currentTime = masterAudio.currentTime;
@@ -1750,6 +1861,7 @@ with tab5:
                     
                     // Play audio snippet
                     function playAudio() {{
+                        const masterAudio = getMasterAudio();
                         if (!masterAudio) return;
                         
                         // Set to start time if outside the snippet range
@@ -1780,6 +1892,7 @@ with tab5:
                     
                     // Pause audio
                     function pauseAudio() {{
+                        const masterAudio = getMasterAudio();
                         if (!masterAudio) return;
                         
                         masterAudio.pause();
@@ -1794,6 +1907,7 @@ with tab5:
                     
                     // Seek in audio
                     function seekAudio(event) {{
+                        const masterAudio = getMasterAudio();
                         if (!masterAudio || currentEndTime <= currentStartTime) return;
                         
                         const progressContainer = document.getElementById('progressContainer');
@@ -1810,12 +1924,15 @@ with tab5:
                     
                     // Load snippet for current sentence
                     function loadAudioSnippet(startTime, endTime) {{
+                        const masterAudio = getMasterAudio();
                         currentStartTime = startTime;
                         currentEndTime = endTime;
                         
                         // Reset playback state
                         pauseAudio();
-                        masterAudio.currentTime = startTime;
+                        if (masterAudio) {{
+                            masterAudio.currentTime = startTime;
+                        }}
                         updateProgress();
                     }}
                     
@@ -1878,7 +1995,7 @@ with tab5:
                         document.getElementById('infoGrid').innerHTML = infoHTML;
                         
                         // Audio player - load snippet times
-                        if (sentence.audio_link && masterAudio) {{
+                        if (sentence.audio_link && getMasterAudio()) {{
                             document.getElementById('audioContainer').style.display = 'block';
                             loadAudioSnippet(sentence.start_time_sec, sentence.end_time_sec);
                         }} else {{
@@ -1888,7 +2005,7 @@ with tab5:
                         // Load existing annotation
                         if (annotation.rating) {{
                             document.getElementById('ratingInput').value = annotation.rating;
-                            document.getElementById('saveInfo').innerHTML = `✏️ Last saved: Rating ${{annotation.rating}}/10 at ${{annotation.timestamp}}`;
+                            document.getElementById('saveInfo').innerHTML = `✅ Saved: Rating ${{annotation.rating}}/10`;
                             document.getElementById('saveInfo').style.display = 'block';
                         }} else {{
                             document.getElementById('ratingInput').value = 5;
@@ -1951,9 +2068,7 @@ with tab5:
                         const rating = parseInt(document.getElementById('ratingInput').value);
                         
                         annotations[currentIdx] = {{
-                            rating: rating,
-                            notes: '',
-                            timestamp: new Date().toISOString()
+                            rating: rating
                         }};
                         
                         window.parent.postMessage({{
@@ -1962,6 +2077,8 @@ with tab5:
                             data: annotations[currentIdx]
                         }}, '*');
                         
+                        // Update preview immediately after save
+                        updatePreviewStats();
                         render();
                     }}
                     
@@ -1981,89 +2098,97 @@ with tab5:
                             idx: currentIdx
                         }}, '*');
                         
+                        // Update preview after clearing
+                        updatePreviewStats();
                         render();
+                    }}
+                    
+                    // Function to update preview stats in real-time
+                    function updatePreviewStats() {{
+                        const annotatedCount = Object.keys(annotations).length;
+                        let ratings = [];
+                        let easy = 0, medium = 0, hard = 0;
+                        
+                        for (let key in annotations) {{
+                            const rating = annotations[key].rating || 0;
+                            if (rating > 0) {{
+                                ratings.push(rating);
+                                if (rating >= 1 && rating <= 3) easy++;
+                                else if (rating >= 4 && rating <= 6) medium++;
+                                else if (rating >= 7 && rating <= 10) hard++;
+                            }}
+                        }}
+                        
+                        const avgRating = ratings.length > 0 ? 
+                            (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : '0.0';
+                        
+                        // Update preview panel stats
+                        document.getElementById('annotatedCount').textContent = annotatedCount;
+                        document.getElementById('avgRating').textContent = avgRating;
+                        document.getElementById('distribution').textContent = easy + '/' + medium + '/' + hard;
+                        
+                        // Show/hide export button based on annotations
+                        if (annotatedCount > 0) {{
+                            document.getElementById('prepareBtn').style.display = 'block';
+                        }}
+                    }}
+                    
+                    function prepareExport() {{
+                        document.getElementById('downloadContainer').style.display = 'block';
+                        document.getElementById('prepareBtn').textContent = '✅ Export Ready';
+                    }}
+                    
+                    function downloadCSV() {{
+                        let csvContent = '';
+                        const headers = Object.keys(sentences[0]);
+                        csvContent += headers.join(',') + ',difficulty_rating\\n';
+                        
+                        sentences.forEach((sentence, idx) => {{
+                            const row = [];
+                            headers.forEach(header => {{
+                                let value = sentence[header];
+                                if (typeof value === 'string') {{
+                                    value = value.replace(/"/g, '""');
+                                    if (value.includes(',') || value.includes('\\n')) {{
+                                        value = '"' + value + '"';
+                                    }}
+                                }}
+                                row.push(value);
+                            }});
+                            
+                            const anno = annotations[idx] || {{}};
+                            row.push(anno.rating || '');
+                            
+                            csvContent += row.join(',') + '\\n';
+                        }});
+                        
+                        const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
+                        const url = URL.createObjectURL(blob);
+                        const link = document.getElementById('downloadLink');
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                        link.href = url;
+                        link.download = 'annotated_' + timestamp + '.csv';
+                        link.click();
+                        URL.revokeObjectURL(url);
+                        
+                        document.getElementById('downloadBtn').textContent = '✅ Downloaded!';
+                        setTimeout(() => {{
+                            document.getElementById('downloadBtn').textContent = '⬇️ Download Annotated CSV';
+                        }}, 2000);
                     }}
                     
                     // Initial render
                     render();
+                    
+                    // Initial preview update
+                    updatePreviewStats();
                 </script>
             </body>
             </html>
             """
             
-            # Render the HTML component
-            components.html(annotation_html, height=660, scrolling=True)
-            
-            st.divider()
-            
-            # Export and statistics section (shown below the annotation interface)
-            st.subheader("💾 Export & Statistics")
-            st.info("💡 Annotations are saved automatically as you rate. Refresh the page after annotating to see updated counts.")
-            
-            if annotated_count > 0:
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Annotated", annotated_count)
-                with col2:
-                    ratings = [anno.get('rating', 0) for anno in st.session_state.sentence_annotations.values() if anno.get('rating', 0) > 0]
-                    avg_rating = sum(ratings) / len(ratings) if ratings else 0
-                    st.metric("Avg Rating", f"{avg_rating:.1f}")
-                with col3:
-                    easy = sum(1 for anno in st.session_state.sentence_annotations.values() if 1 <= anno.get('rating', 0) <= 3)
-                    medium = sum(1 for anno in st.session_state.sentence_annotations.values() if 4 <= anno.get('rating', 0) <= 6)
-                    hard = sum(1 for anno in st.session_state.sentence_annotations.values() if 7 <= anno.get('rating', 0) <= 10)
-                    st.metric("Easy/Med/Hard", f"{easy}/{medium}/{hard}")
-
-                def prepare_export():
-                    st.session_state.export_ready = True
-
-                st.button("📥 Prepare CSV Export", use_container_width=True, type="primary", on_click=prepare_export)
-
-                if st.session_state.get('export_ready', False):
-                    with st.spinner("Preparing export..."):
-                        export_df = anno_df.copy()
-                        ratings_list = []
-                        notes_list = []
-                        timestamps_list = []
-                        for i in range(len(export_df)):
-                            anno = st.session_state.sentence_annotations.get(i, {})
-                            ratings_list.append(anno.get('rating', ''))
-                            notes_list.append(anno.get('notes', ''))
-                            timestamps_list.append(str(anno.get('timestamp', '')) if 'timestamp' in anno else '')
-                        export_df['difficulty_rating'] = ratings_list
-                        export_df['annotation_notes'] = notes_list
-                        export_df['annotation_timestamp'] = timestamps_list
-                        csv_bytes = export_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="⬇️ Download Annotated CSV",
-                            data=csv_bytes,
-                            file_name=f"annotated_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                        st.session_state.export_ready = False
-
-                if st.button("📊 Show/Hide Statistics", use_container_width=True):
-                    st.session_state.show_stats = not st.session_state.get('show_stats', False)
-
-                if st.session_state.get('show_stats', False):
-                    st.markdown("#### 📊 Rating Distribution")
-                    rating_counts = {}
-                    for anno in st.session_state.sentence_annotations.values():
-                        rating = anno.get('rating', 0)
-                        if rating > 0:
-                            rating_counts[rating] = rating_counts.get(rating, 0) + 1
-                    if rating_counts:
-                        chart_data = pd.DataFrame({
-                            'Rating': list(rating_counts.keys()),
-                            'Count': list(rating_counts.values())
-                        }).sort_values('Rating')
-                        st.bar_chart(chart_data.set_index('Rating'))
-                    with_notes = sum(1 for anno in st.session_state.sentence_annotations.values() if anno.get('notes'))
-                    st.write(f"**Sentences with notes:** {with_notes}/{annotated_count}")
-            else:
-                st.info("💡 Start annotating to enable export")
+            # Render the unified HTML component
+            components.html(unified_html, height=900, scrolling=True)
         
 with tab6:
     st.header("About This Tool")
