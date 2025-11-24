@@ -29,7 +29,7 @@ TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_transliteration_outpu
 TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_translation_output.pkl"
 OUTPUT_CSV_FILE = BASE_DIR / "output" / "test5_results.csv"
 
-links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("GOOGLE_DRIVE_AUDIO_FOLDER_ID"))
+links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
 
 # Audio segmentation based on silence
 # exported_chunk_paths = segment_dialogue(
@@ -182,7 +182,7 @@ except Exception as e:
     print(f"An error occurred: {e}")
 
 # Upload CSV file to Google Drive using rclone
-upload_files([str(OUTPUT_CSV_FILE)], os.getenv("GOOGLE_DRIVE_CSV_FOLDER_ID"))
+upload_files([str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))
 
 """
 TODO:

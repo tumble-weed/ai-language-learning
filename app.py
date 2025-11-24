@@ -18,7 +18,10 @@ import io
 import math
 from textwrap import dedent
 import soundfile as sf
-import gdown
+import dotenv
+from rclone_python import rclone
+
+dotenv.load_dotenv()
 
 # # Import your existing modules
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
@@ -49,10 +52,15 @@ if 'sentence_annotations' not in st.session_state:
     st.session_state.sentence_annotations = {}
 if 'audio_snippets_cache' not in st.session_state:
     st.session_state.audio_snippets_cache = {}
-if 'practice_df' not in st.session_state:
-    st.session_state.practice_df = None
 if 'audio_file_link' not in st.session_state:
     st.session_state.audio_file_link = None
+if 'dropbox_csv_files' not in st.session_state:
+    try:
+        files = rclone.ls(f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}")
+        st.session_state.dropbox_csv_files = {f["Name"]: f["ID"] for f in files}
+    except Exception as e:
+        st.error(f"Error listing folder: {e}")
+        st.session_state.dropbox_csv_files = {}
 
 # Initialize global master audio element if audio link is available
 if st.session_state.audio_file_link:
@@ -447,6 +455,7 @@ with tab1:
 
                 # Below code is for directly using audio link without downloading
                 st.session_state.audio_file_link = original_audio_path
+                # st.info(f"Using audio link from CSV: {original_audio_path}")
                 if st.session_state.audio_file_link:
                     components.html(f"""
                         <audio id="globalMasterAudio" preload="auto" src="{st.session_state.audio_file_link}" style="display: none;"></audio>
@@ -522,29 +531,53 @@ with tab1:
     st.divider()
     
     # Quick load from output folder
-    st.subheader("📁 Quick Load from Output Folder")
+    # st.subheader("📁 Quick Load from Output Folder")
     
-    output_dir = Path(__file__).resolve().parent / "output"
+    # output_dir = Path(__file__).resolve().parent / "output"
     
-    if output_dir.exists():
-        csv_files = list(output_dir.glob("**/*.csv"))
+    # if output_dir.exists():
+    #     csv_files = list(output_dir.glob("**/*.csv"))
         
-        if csv_files:
-            csv_options = {f"{f.parent.name}/{f.name}": f for f in csv_files}
+    #     if csv_files:
+    #         csv_options = {f"{f.parent.name}/{f.name}": f for f in csv_files}
             
-            selected_file = st.selectbox(
-                "Select a results file from output folder:",
-                options=["-- Select a file --"] + list(csv_options.keys())
-            )
+    #         selected_file = st.selectbox(
+    #             "Select a results file from output folder:",
+    #             options=["-- Select a file --"] + list(csv_options.keys())
+    #         )
             
-            if selected_file != "-- Select a file --" and st.button("📥 Load Selected File", type="primary"):
-                if load_csv_to_results(csv_options[selected_file]):
-                    st.success(f"✅ Loaded {len(st.session_state.processed_results)} sentences from {csv_options[selected_file].name}!")
-                    st.info("👉 Go to the **Results** tab to view the data")
-        else:
-            st.info("No CSV files found in output folder. Process an audio file first or upload a CSV above.")
-    else:
-        st.info("Output folder not found. Process an audio file first or upload a CSV above.")
+    #         if selected_file != "-- Select a file --" and st.button("📥 Load Selected File", type="primary"):
+    #             if load_csv_to_results(csv_options[selected_file]):
+    #                 st.success(f"✅ Loaded {len(st.session_state.processed_results)} sentences from {csv_options[selected_file].name}!")
+    #                 st.info("👉 Go to the **Results** tab to view the data")
+    #     else:
+    #         st.info("No CSV files found in output folder. Process an audio file first or upload a CSV above.")
+    # else:
+    #     st.info("Output folder not found. Process an audio file first or upload a CSV above.")
+
+    st.subheader("📁 Quick Load from Drive")
+
+    if st.session_state.dropbox_csv_files:
+        selected_drive_file = st.selectbox(
+            "Select a results CSV file from Dropbox:",
+            options=["-- Select a file --"] + list(st.session_state.dropbox_csv_files.keys())
+        )
+        
+        if selected_drive_file != "-- Select a file --" and st.button("📥 Load Selected File", type="primary"):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                try:
+                    # Download from Dropbox using rclone
+                    remote_path = f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}{selected_drive_file}"
+                    rclone.copy(remote_path, tmp_dir)
+                    
+                    # Read the downloaded file
+                    downloaded_file = Path(tmp_dir) / selected_drive_file
+                    if load_csv_to_results(downloaded_file):
+                        st.success(f"✅ Loaded {len(st.session_state.processed_results)} sentences from {selected_drive_file}!")
+                        st.info("👉 Go to the **Results** tab to view the data")
+                except Exception as e:
+                    st.error(f"❌ Error downloading file from Dropbox: {str(e)}")
+                    st.exception(e)
 
 # with tab2:
 #     st.header("Upload Audio File")
@@ -981,12 +1014,21 @@ with tab4:
     """)
     
     if st.session_state.processing_complete and st.session_state.processed_results:
-        practice_df = st.session_state.practice_df
+        practice_df = ensure_results_df()
         
         if practice_df is None or len(practice_df) == 0:
             st.warning("⚠️ No sentences with translations available for practice. Please load a CSV file with a Translation column.")
         else:
-            # Difficulty helpers (already computed in precompute_all_tabs)
+            # Difficulty helpers
+            def categorize_difficulty(score: float) -> str:
+                if score < 33:
+                    return "Easy"
+                if score < 66:
+                    return "Medium"
+                return "Hard"
+
+            practice_df['difficulty_label'] = practice_df['rh_avg'].apply(categorize_difficulty)
+
             difficulty_emojis = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}
             difficulty_options = ["Easy", "Medium", "Hard"]
 
