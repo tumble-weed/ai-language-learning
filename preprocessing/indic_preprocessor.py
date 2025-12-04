@@ -135,15 +135,15 @@ def preprocess_text(text: str, language: str) -> list[str]:
    # from text dictionary, filter out sentences not in expected language
    
    # for testing
-   result = []
-   for sentence in sentences:
-      res = language_identifier(sentence, language)
-      if res[0]:
-         result.append(sentence)
-      else:
-         print(sentence)
+   # result = []
+   # for sentence in sentences:
+   #    res = language_identifier(sentence, language)
+   #    if res[0]:
+   #       result.append(sentence)
+   #    else:
+   #       print(sentence)
 
-   # result = [sentence for sentence in sentences if language_identifier(sentence, language)[0]]
+   result = [sentence for sentence in sentences if language_identifier(sentence, language)[0]]
    
    return result
 

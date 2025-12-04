@@ -17,3 +17,5 @@ input/test2.wav
 input/test4.wav
 input/test5.wav
 input/test6.wav
+mlruns
+mlartifacts

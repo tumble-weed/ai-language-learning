@@ -1,20 +1,26 @@
-from transformers import AutoModel
+from transformers import AutoModel, AutoConfig
 import torch, torchaudio
 import os
-import glob
-from pydub import AudioSegment
 import pickle
 
 HF_MODELS_DIR = ".\\huggingface_models"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-torchaudio.set_audio_backend("soundfile")
+model_name = "ai4bharat/indic-conformer-600m-multilingual"
+
+# torchaudio.set_audio_backend("soundfile")
+
+config = AutoConfig.from_pretrained(
+    model_name,
+    use_auth_token=HF_TOKEN,
+    trust_remote_code=True,
+)
 
 model = AutoModel.from_pretrained(
-  "ai4bharat/indic-conformer-600m-multilingual", 
-  trust_remote_code=True,
-  cache_dir=HF_MODELS_DIR,
-  token=HF_TOKEN
+    model_name,
+    config=config,
+    use_auth_token=HF_TOKEN,
+    trust_remote_code=True,
 )
 
 def indic_transcribe_chunks(lang_code, exported_chunk_paths, output_file=None):
