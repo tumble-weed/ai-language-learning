@@ -7,29 +7,32 @@ import os
 # from sentence_alignment.align_sentences import align_sentences_to_timestamps
 # from transliteration.indic_en_trlit import transliterate_indic_to_english
 # from translation.indic_en_translation import translate_indic_to_english
-from utils.rclone_helper import upload_files
-from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
-from metrics.wfr import WordFrequencyMetric
-from metrics.sl import SentenceLengthMetric
-import csv
+# from utils.rclone_helper import upload_files
+from metrics.english_metrics import get_features
+# from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
+# from metrics.wfr import WordFrequencyMetric
+# from metrics.sl import SentenceLengthMetric
+# import csv
 from pathlib import Path
 import dotenv
 import pickle
+import pandas as pd
+import joblib
 
 dotenv.load_dotenv()  # Load environment variables from .env file
 
 
 BASE_DIR = Path(__file__).resolve().parent
-AUDIO_FILE_PATH = BASE_DIR / "input" / "test5.wav"
-OUTPUT_DIR = BASE_DIR / "output" / "test5_dialogues"
-TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test5_transcribed_output.pkl"
-PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test5_punctuated_output.txt"
-SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test5_sentences_output.txt"
-TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_transliteration_output.pkl"
-TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test5_translation_output.pkl"
-OUTPUT_CSV_FILE = BASE_DIR / "output" / "test5_results.csv"
+AUDIO_FILE_PATH = BASE_DIR / "input" / "test3.wav"
+OUTPUT_DIR = BASE_DIR / "output" / "test3_dialogues"
+TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test3_transcribed_output.pkl"
+PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test3_punctuated_output.txt"
+SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test3_sentences_output.txt"
+TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test3_transliteration_output.pkl"
+TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test3_translation_output.pkl"
+OUTPUT_CSV_FILE = BASE_DIR / "output" / "test3_results.csv"
 
-links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
+# links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
 
 # Audio segmentation based on silence
 # exported_chunk_paths = segment_dialogue(
@@ -53,7 +56,7 @@ links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PAT
 
 
 # transcribed_text = indic_transcribe_chunks(
-#     lang_code='te',
+#     lang_code='mr',
 #     exported_chunk_paths=exported_chunk_paths,
 #     output_file=TRANSCRIBE_OUTPUT_FILE
 # )
@@ -83,7 +86,7 @@ links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PAT
 #         # Get first line
 #         punc_text = f_in.read()
 
-#         preprocessed_text = preprocess_text(punc_text, 'tel_Telu')
+#         preprocessed_text = preprocess_text(punc_text, 'mar_Deva')
 
 #         with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
 #             f_out.write("\n".join(preprocessed_text))
@@ -104,12 +107,19 @@ links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PAT
 #     transcribed_text = pickle.load(t_in)
 #     preprocessed_text = [line.strip() for line in f_in if line.strip()] 
 #     aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
-#     aligned_result = transliterate_indic_to_english(aligned_result, 'te')
+#     aligned_result = transliterate_indic_to_english(aligned_result, 'mr')
 
 #     # save result into file after transliteration
 #     with TRANSLITERATION_OUTPUT_FILE.open('wb') as f_out:
 #         pickle.dump(aligned_result, f_out)
 
+
+# BATCH_SIZE = 1
+# translated_result = []
+# for i in range(0, len(aligned_result), BATCH_SIZE):
+#     chunk = aligned_result[i:i+BATCH_SIZE]
+#     translated = translate_indic_to_english(chunk, 'mr')
+#     translated_result.extend(translated)
 
 # with TRANSLITERATION_OUTPUT_FILE.open('rb') as f_in:
 #     aligned_result = pickle.load(f_in)
@@ -119,76 +129,29 @@ links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PAT
 #     for i in range(0, len(aligned_result), BATCH_SIZE):
 #         chunk = aligned_result[i:i+BATCH_SIZE]
 #         print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
-#         translated = translate_indic_to_english(chunk, 'te')
+#         translated = translate_indic_to_english(chunk, 'mr')
 #         translated_result.extend(translated)
 
 #     # save result into file after translation
 #     with TRANSLATION_OUTPUT_FILE.open('wb') as f_out:
 #         pickle.dump(translated_result, f_out)
 
+
 with TRANSLATION_OUTPUT_FILE.open('rb') as f_in:
     translated_result = pickle.load(f_in)
 
-# Calculate difficulty score
-rh1 = IndicReadabilityRH1()
-rh2 = IndicReadabilityRH2()
-# wrf = WordFrequencyMetric()
-sl = SentenceLengthMetric()
+data = pd.DataFrame(translated_result)
 
-# frequencies = wrf.get_frequencies()
+features = get_features(data, concat=False)
 
-results_list = []
-for t in translated_result:
-    rh1Res = rh1.compute(t["sentence"])
-    rh2Res = rh2.compute(t["sentence"])
-    avg = (rh1Res + rh2Res) / 2
-    slRes = sl.compute(t["sentence"])
-    # wfrRes = wrf.compute(t, frequencies)
+difficulty_model = joblib.load('models\\al_random_forest_model.pkl')
 
-    row_data = {
-        "Audio_file": t["audio_file"],
-        "Original_audio_file": links[0] if links else "", # make value to t["original_audio_file"] when using local path
-        "Start": t["start"],
-        "End": t["end"],
-        "Text": t["sentence"],
-        "Transliteration": t.get("transliteration", ""),
-        "Translation": t.get("translation", ""),
-        "RH1_Result": rh1Res,
-        "RH2_Result": rh2Res,
-        "RH_Average": avg,
-        "SL_Result": slRes
-        # "WFR_Result": wfrRes
-    }
-    results_list.append(row_data)
+diffs = difficulty_model.predict(features.values)
 
-sorted_results = sorted(
-    results_list, 
-    key=lambda item: (item['SL_Result'], item['RH_Average']),
-    reverse=False 
-)
+# creating a column 'difficulty' in data
+data['difficulty'] = diffs
 
-
-
-# Can also export to .json if needed. Exporting to CSV for simplicity.
-header = ["Audio_file", "Original_audio_file", "Start", "End", "Text", "Transliteration", "Translation", "RH1_Result", "RH2_Result", "RH_Average", "SL_Result"]
-try:
-    with OUTPUT_CSV_FILE.open('w', encoding='utf-8', newline='') as f_out:
-        writer = csv.DictWriter(f_out, fieldnames=header)
-        writer.writeheader()
-        writer.writerows(sorted_results)
-
-    print(f"\nProcessing complete. Sorted results saved to {OUTPUT_CSV_FILE}")
-except Exception as e:
-    print(f"An error occurred: {e}")
+data.to_csv(OUTPUT_CSV_FILE)
 
 # Upload CSV file to Google Drive using rclone
-upload_files([str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))
-
-"""
-TODO:
-SpaCy
-get list of morphosyntactic features for each word in the sentence
-perform analysis and feature engineering
-create regression model to predict difficulty level based on these features
-
-"""
+# upload_files([str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))

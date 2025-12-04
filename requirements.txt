@@ -1,9 +1,10 @@
 webrtcvad
 pydub
 onnxruntime
-transformers
-torch
-torchaudio
+transformers==4.51.3
+torch==2.5.0
+torchaudio==2.5.0
+torchcodec
 soundfile
 python-dotenv
 fasttext-wheel
@@ -12,4 +13,5 @@ pandas
 indictranstoolkit
 modAL-python
 spacy
-gdown
+wandb
+mlflow
