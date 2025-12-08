@@ -1,4 +1,4 @@
-,sentence,start,end,original_audio_file,audio_file,transliteration,translation,difficulty
+id,sentence,start,end,original_audio_file,audio_file,transliteration,translation,difficulty
 0,भारताला एकोणीशे सत्तेचाळीस मध्ये स्वातंत्र्य मिळाले,2060.0,6300.0,test3.wav,test3_segments\segment_1.wav,bharatala ekonishe sattechalis madhye swatantrya midale,India gained independence in nineteen forty-seven,2.501333333333333
 1,परंतु महिलांसाठी स्वातंत्र्य अजूनही तूळचे स्वप्न होते,6500.0,11040.0,test3.wav,test3_segments\segment_2.wav,parantu mahilansathi swatantrya ajunahi toolche swapna hote,But freedom for women was still a distant dream.,3.685
 2,"विध्वा, पुनर्विवाह आणि बालविवाह या प्रथा रोखण्यासाठी समाजाला दीर्घ संघर्ष करावा लागला",11150.0,19530.0,test3.wav,test3_segments\segment_3.wav,"vidhva, punarvivah aanee balvivah yaa pratha rokhanyasathi samajala dirgh sangharsh karava lagla","The community had to fight a long battle to stop the practice of widowhood, remarriage and child marriage",5.7

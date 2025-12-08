@@ -151,6 +151,8 @@ diffs = difficulty_model.predict(features.values)
 # creating a column 'difficulty' in data
 data['difficulty'] = diffs
 
+data.index.name = 'id'
+
 data.to_csv(OUTPUT_CSV_FILE)
 
 # Upload CSV file to Google Drive using rclone

@@ -15,3 +15,5 @@ modAL-python
 spacy
 wandb
 mlflow
+skelo
+fsrs
