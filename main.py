@@ -7,7 +7,7 @@ import os
 # from sentence_alignment.align_sentences import align_sentences_to_timestamps
 # from transliteration.indic_en_trlit import transliterate_indic_to_english
 # from translation.indic_en_translation import translate_indic_to_english
-# from utils.rclone_helper import upload_files
+from utils.rclone_helper import upload_files
 from metrics.english_metrics import get_features
 # from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 # from metrics.wfr import WordFrequencyMetric
@@ -32,7 +32,7 @@ TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test3_transliteration_outpu
 TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test3_translation_output.pkl"
 OUTPUT_CSV_FILE = BASE_DIR / "output" / "test3_results.csv"
 
-# links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
+links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
 
 # Audio segmentation based on silence
 # exported_chunk_paths = segment_dialogue(
@@ -151,7 +151,11 @@ diffs = difficulty_model.predict(features.values)
 # creating a column 'difficulty' in data
 data['difficulty'] = diffs
 
+data.index.name = 'id'
+
+data['original_audio_file'] = links[0]
+
 data.to_csv(OUTPUT_CSV_FILE)
 
 # Upload CSV file to Google Drive using rclone
-# upload_files([str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))
+upload_files([str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))
