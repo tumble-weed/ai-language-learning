@@ -9,6 +9,8 @@ soundfile
 python-dotenv
 fasttext-wheel
 streamlit
+streamlit-webrtc>=0.47.0
+aiortc>=1.6.0
 pandas
 indictranstoolkit
 modAL-python
@@ -17,3 +19,4 @@ wandb
 mlflow
 skelo
 fsrs
+google-genai

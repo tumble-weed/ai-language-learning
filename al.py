@@ -118,5 +118,17 @@ Ans)
 
 
 TODO:
-Algorithm to evaluate answers in translation game.
+Add feature to automatically evalutate the user answers using llm and log the whole process using langfuse.
+
+
+
+1. Reference answer is active voice, user answer is passive voice. We want to mark it incorrect since
+user hasn't understood the concept of voice properly. But embedding systems will give high similarity score.
+
+
+Give the user answer to llm for its evalutation. 
+Prompt llm to tell whether the user answer matches with refernce answer or not.
+if not, give proper reason. 
+
+maybe use tools like spacy and fuzzy string match.
 """
