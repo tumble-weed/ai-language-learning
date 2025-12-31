@@ -21,6 +21,9 @@ from skelo.model.glicko2 import Glicko2Model
 from fsrs import Scheduler, Card, Rating
 from utils.eval_answer import evaluate_translation
 from utils.rclone_helper import upload_files
+import requests
+from streamlit_cookies_manager import EncryptedCookieManager
+import threading
 
 dotenv.load_dotenv()
 
@@ -38,7 +41,53 @@ st.set_page_config(
     layout="wide",
 )
 
+# Hide cookie manager component with CSS
+st.markdown("""
+<style>
+    /* Hide the cookie manager sync element */
+    [data-testid="stElementContainer"]:has([data-testid="stElementContainer"][class*="CookieManager"]) {
+        display: none !important;
+    }
+    .st-key-CookieManager-sync_cookies {
+        display: none !important;
+    }
+    div[class*="CookieManager"] {
+        display: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Initialize cookie manager for persistent authentication
+# This must come after set_page_config
+cookies = EncryptedCookieManager(
+    prefix="lang_learning_",
+    password=os.getenv('COOKIE_PASSWORD', 'default-secret-key-change-in-production')
+)
+
+if not cookies.ready():
+    st.stop()
+
 # Initialize session state
+if 'authenticated' not in st.session_state:
+    # Try to load authentication from cookies
+    auth_cookie = cookies.get('authenticated')
+    user_info_cookie = cookies.get('user_info')
+    
+    if auth_cookie == 'true' and user_info_cookie:
+        try:
+            st.session_state.authenticated = True
+            st.session_state.user_info = json.loads(user_info_cookie)
+        except:
+            st.session_state.authenticated = False
+            st.session_state.user_info = None
+    else:
+        st.session_state.authenticated = False
+        st.session_state.user_info = None
+        
+if 'user_info' not in st.session_state:
+    st.session_state.user_info = None
+if 'google_auth_code' not in st.session_state:
+    st.session_state.google_auth_code = None
 if 'processed_results' not in st.session_state:
     st.session_state.processed_results = None
 if 'audio_file_path' not in st.session_state:
@@ -62,31 +111,7 @@ if 'dropbox_csv_files' not in st.session_state:
 
 # Translation game session state
 if 'user_data' not in st.session_state:
-    # Try to load user data from Dropbox first, then local file
-    try:
-        json_folder = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
-        user_file_name = "user_rating.json"
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            try:
-                # Download from Dropbox using rclone
-                remote_path = f"dropbox:{json_folder}{user_file_name}"
-                rclone.copy(remote_path, tmp_dir)
-                
-                # Read the downloaded file
-                downloaded_file = Path(tmp_dir) / user_file_name
-                with open(downloaded_file, 'r') as f:
-                    raw = json.load(f)
-                history = {}
-                for sid, obj in raw.get("history", {}).items():
-                    card = Card.from_dict(obj["card"])
-                    due = datetime.fromisoformat(obj["due"])
-                    history[int(sid)] = {"card": card, "due": due}
-                raw["history"] = history
-                st.session_state.user_data = raw
-            except Exception as e:
-                pass
-    except Exception as e:
-        pass
+    st.session_state.user_data = None
         
 if 'current_sentence' not in st.session_state:
     st.session_state.current_sentence = None
@@ -106,7 +131,97 @@ if 'game_scheduler' not in st.session_state:
 # Translation game constants
 MIN_RATING = 600
 MAX_RATING = 1800
-USER_FILE = "user_rating.json"
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
+REDIRECT_URI = os.getenv('REDIRECT_URI', '')
+
+
+def get_google_auth_url():
+    """Generate Google OAuth authorization URL."""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return None
+    
+    scopes = [
+        'openid',
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/userinfo.profile'
+    ]
+    
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={GOOGLE_CLIENT_ID}&"
+        f"redirect_uri={REDIRECT_URI}&"
+        f"response_type=code&"
+        f"scope={' '.join(scopes)}&"
+        f"access_type=offline&"
+        f"prompt=consent"
+    )
+    return auth_url
+
+
+def exchange_code_for_token(code):
+    """Exchange authorization code for access token."""
+    token_url = 'https://oauth2.googleapis.com/token'
+    data = {
+        'code': code,
+        'client_id': GOOGLE_CLIENT_ID,
+        'client_secret': GOOGLE_CLIENT_SECRET,
+        'redirect_uri': REDIRECT_URI,
+        'grant_type': 'authorization_code'
+    }
+    response = requests.post(token_url, data=data)
+    return response.json()
+
+
+def get_user_info(access_token):
+    """Fetch user information from Google."""
+    userinfo_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
+    headers = {'Authorization': f'Bearer {access_token}'}
+    response = requests.get(userinfo_url, headers=headers)
+    return response.json()
+
+
+def handle_google_auth():
+    """Handle Google OAuth flow."""
+    query_params = st.query_params
+    
+    if 'code' in query_params and not st.session_state.authenticated:
+        code = query_params['code']
+        try:
+            # Exchange code for token
+            token_data = exchange_code_for_token(code)
+            if 'access_token' in token_data:
+                # Get user info
+                user_info = get_user_info(token_data['access_token'])
+                st.session_state.user_info = user_info
+                st.session_state.authenticated = True
+                
+                # Save to cookies for persistent authentication (30 days)
+                cookies['authenticated'] = 'true'
+                cookies['user_info'] = json.dumps(user_info)
+                cookies.save()
+                
+                # Clear the code from URL
+                st.query_params.clear()
+                st.rerun()
+        except Exception as e:
+            st.error(f"Authentication failed: {str(e)}")
+    
+
+def logout():
+    """Log out the current user."""
+    st.session_state.authenticated = False
+    st.session_state.user_info = None
+    st.session_state.google_auth_code = None
+    
+    # Clear cookies
+    cookies['authenticated'] = 'false'
+    cookies['user_info'] = ''
+    cookies.save()
+    
+    st.rerun()
 
 # Initialize global master audio element if audio link is available
 # if st.session_state.audio_file_link:
@@ -170,25 +285,85 @@ def scale_10_to_rating(score_10):
     """Convert 1-10 scale to Glicko rating."""
     return MIN_RATING + (score_10 - 1) * (MAX_RATING - MIN_RATING) / 9
 
-def save_user(user):
-    """Creating temporary json file and uploading to dropbox using rclone."""
-    folder_path = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        temp_path = Path(tmp_dir) / USER_FILE
-        # Convert Card objects to dicts for JSON serialization
-        history_serializable = {}
-        for sid, obj in user["history"].items():
-            history_serializable[sid] = {
-                "card": obj["card"].to_dict(),
-                "due": obj["due"].isoformat()
-            }
-        user_serializable = user.copy()
-        user_serializable["history"] = history_serializable
+def get_user_file_name(user_id: str) -> str:
+    """Get the user data filename based on user_id."""
+    return f"{user_id}.json"
 
-        with open(temp_path, 'w') as f:
-            json.dump(user_serializable, f, indent=4)
-        
-        upload_files([temp_path], dropbox_folder=folder_path)
+
+def load_user_data(user_id: str):
+    """Load user data from Dropbox or create new user if first time."""
+    json_folder = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
+    user_file_name = get_user_file_name(user_id)
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            # Download from Dropbox using rclone
+            remote_path = f"dropbox:{json_folder}{user_file_name}"
+            rclone.copy(remote_path, tmp_dir)
+            
+            # Read the downloaded file
+            downloaded_file = Path(tmp_dir) / user_file_name
+            if downloaded_file.exists():
+                with open(downloaded_file, 'r') as f:
+                    raw = json.load(f)
+                history = {}
+                for sid, obj in raw.get("history", {}).items():
+                    card = Card.from_dict(obj["card"])
+                    due = datetime.fromisoformat(obj["due"])
+                    history[int(sid)] = {"card": card, "due": due}
+                raw["history"] = history
+                return raw
+        except Exception as e:
+            pass
+    
+    # First time user - create new user data
+    new_user = {
+        "user_id": user_id,
+        "rating": 1200.0,
+        "rd": 350.0,
+        "sigma": 0.06,
+        "rating_10": rating_to_10_scale(1200.0),
+        "history": {}
+    }
+    
+    # Save the new user data to Dropbox
+    save_user(new_user, user_id)
+    
+    return new_user
+
+
+def save_user(user, user_id: str = None):
+    """Creating temporary json file and uploading to dropbox using rclone in a background thread."""
+    # Get user_id from parameter or from user data
+    if user_id is None:
+        user_id = user.get("user_id")
+    if user_id is None:
+        return  # Cannot save without user_id
+    
+    user_file_name = get_user_file_name(user_id)
+    
+    def _save_task():
+        folder_path = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_path = Path(tmp_dir) / user_file_name
+            # Convert Card objects to dicts for JSON serialization
+            history_serializable = {}
+            for sid, obj in user["history"].items():
+                history_serializable[sid] = {
+                    "card": obj["card"].to_dict(),
+                    "due": obj["due"].isoformat()
+                }
+            user_serializable = user.copy()
+            user_serializable["history"] = history_serializable
+
+            with open(temp_path, 'w') as f:
+                json.dump(user_serializable, f, indent=4)
+            
+            upload_files([temp_path], dropbox_folder=folder_path)
+    
+    # Start the save operation in a background thread
+    save_thread = threading.Thread(target=_save_task, daemon=True)
+    save_thread.start()
     
 
 
@@ -446,6 +621,143 @@ def preset_save(rating_value: int, idx: int, total_sentences: int):
     if rating_value == 0:
         notes = "Needs review"
     save_annotation(idx, rating_value, notes, move_next=True, total_sentences=total_sentences)
+
+# Handle Google authentication
+handle_google_auth()
+
+# Authentication gate
+if not st.session_state.authenticated:
+    st.title("🎙️ Language Learning Difficulty Analyzer")
+    st.markdown("""
+    ### Welcome! Please sign in to continue
+    
+    This application analyzes audio recordings to identify sentence difficulty based on readability metrics.
+    Sign in with your Google account to access all features.
+    """)
+    
+    st.divider()
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+            st.error("""
+            ⚠️ **Google OAuth not configured**
+            
+            Please set the following environment variables:
+            - `GOOGLE_CLIENT_ID`
+            - `GOOGLE_CLIENT_SECRET`
+            - `REDIRECT_URI` (optional, defaults to http://localhost:8501)
+            
+            To get these credentials:
+            1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+            2. Create a new project or select existing one
+            3. Enable Google+ API
+            4. Go to Credentials → Create Credentials → OAuth 2.0 Client ID
+            5. Set application type to 'Web application'
+            6. Add authorized redirect URI: `http://localhost:8501`
+            7. Copy the Client ID and Client Secret to your `.env` file
+            """)
+        else:
+            auth_url = get_google_auth_url()
+            
+            # Custom Google Sign-In button using HTML
+            st.markdown("""
+            <div style="text-align: center; margin: 40px 0;">
+                <a href="{auth_url}" target="_self" style="text-decoration: none;">
+                    <div style="
+                        display: inline-flex;
+                        align-items: center;
+                        background: white;
+                        border: 1px solid #dadce0;
+                        border-radius: 4px;
+                        padding: 12px 24px;
+                        cursor: pointer;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                        transition: box-shadow 0.2s;
+                    " onmouseover="this.style.boxShadow='0 2px 6px rgba(0,0,0,0.15)'" 
+                       onmouseout="this.style.boxShadow='0 1px 3px rgba(0,0,0,0.1)'">
+                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
+                             width="18" height="18" style="margin-right: 12px;">
+                        <span style="
+                            color: #3c4043;
+                            font-family: 'Google Sans', Roboto, Arial, sans-serif;
+                            font-size: 14px;
+                            font-weight: 500;
+                            letter-spacing: 0.25px;
+                        ">Sign in with Google</span>
+                    </div>
+                </a>
+            </div>
+            """.format(auth_url=auth_url), unsafe_allow_html=True)
+            
+            st.info("""
+            🔒 **Your privacy matters**
+            
+            We only request access to your basic profile information (name, email, profile picture).
+            Your data is never shared with third parties.
+            """)
+    
+    st.stop()
+
+# User is authenticated - show main app with styled sidebar
+user_name = st.session_state.user_info.get('name', 'User')
+user_email = st.session_state.user_info.get('email', '')
+user_id = st.session_state.user_info.get('id', '')
+
+# Load user data after authentication if not already loaded
+if st.session_state.user_data is None and user_id:
+    st.session_state.user_data = load_user_data(user_id)
+
+# Get profile picture with proper fallback
+user_picture = st.session_state.user_info.get('picture', '')
+
+# Use default image if no picture provided
+if not user_picture or user_picture == '':
+    user_picture = "https://www.dropbox.com/scl/fi/gujzdr8p2ikzw36pq981q/user.png?rlkey=iaxe3fk3th1gw15th8gx5km3i&st=2lu84sej&raw=1"
+
+# Custom styled profile section in sidebar
+st.sidebar.markdown(f"""
+<div style="
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 25px 15px;
+    border-radius: 15px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    text-align: center;
+">
+    <img src="{user_picture}" 
+         onerror="this.src='https://www.dropbox.com/scl/fi/gujzdr8p2ikzw36pq981q/user.png?rlkey=iaxe3fk3th1gw15th8gx5km3i&st=2lu84sej&raw=1';"
+         style="
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        border: 3px solid white;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        margin-bottom: 12px;
+        object-fit: cover;
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+    ">
+    <div style="
+        color: white;
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 5px;
+    ">{user_name}</div>
+    <div style="
+        color: rgba(255,255,255,0.9);
+        font-size: 13px;
+        font-weight: 400;
+    ">{user_email}</div>
+</div>
+""", unsafe_allow_html=True)
+
+# Sign out button with custom styling
+if st.sidebar.button("🚪 Sign Out", use_container_width=True, type="secondary"):
+    logout()
+
+st.sidebar.divider()
 
 # Title and description
 st.title("🎙️ Language Learning Difficulty Analyzer")
@@ -1793,6 +2105,7 @@ with tab5:
                     is_correct = eval_result['is_correct']
                     user = update_user_rating(user, current['difficulty'], is_correct)
                     user = update_fsrs_card(user, sid, is_correct)
+                    
                     with st.spinner("💾 Saving your progress..."):
                         save_user(user)
                     st.session_state.user_data = user

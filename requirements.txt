@@ -20,3 +20,6 @@ mlflow
 skelo
 fsrs
 google-genai
+google-auth-oauthlib==1.2.3
+google-auth
+streamlit-cookies-manager

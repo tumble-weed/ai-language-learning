@@ -1,5 +1,41 @@
 # AI Language Learning
 
+🎙️ **Language Learning Difficulty Analyzer** - Analyze audio recordings to identify sentence difficulty based on readability metrics.
+
+## 🔐 Authentication
+
+This app uses **Google OAuth 2.0** for secure user authentication. Users must sign in with their Google account to access the application features.
+
+### ✨ Persistent Login
+Once logged in, you'll **stay logged in** even after closing your browser! The app uses encrypted cookies to remember your authentication.
+
+### Quick Setup
+
+1. **Get Google OAuth Credentials**:
+   - See [GOOGLE_AUTH_SETUP.md](GOOGLE_AUTH_SETUP.md) for detailed instructions
+   - Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+   - Enable Google+ API
+   - Create OAuth 2.0 credentials
+
+2. **Configure Environment**:
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your Google credentials + generate a COOKIE_PASSWORD
+   ```
+
+3. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Run the App**:
+   ```bash
+   streamlit run app.py
+   ```
+
+For detailed authentication flow, see [AUTH_FLOW.md](AUTH_FLOW.md).  
+For persistent authentication details, see [PERSISTENT_AUTH.md](PERSISTENT_AUTH.md).
+
 ## Download IndicLID model and save it in indiclid-ftn folder
 ` https://github.com/AI4Bharat/IndicLID/releases/download/v1.0/indiclid-ftn.zip `
 

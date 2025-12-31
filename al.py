@@ -131,4 +131,10 @@ Prompt llm to tell whether the user answer matches with refernce answer or not.
 if not, give proper reason. 
 
 maybe use tools like spacy and fuzzy string match.
+
+1. Adding word frequency.
+2. cost analysis runpod vs openrouter.
+if(runpod cost < openrouter cost){
+    run embedding model locally for eval function and have less call to openrouter.
+}
 """
