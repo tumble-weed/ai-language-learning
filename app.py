@@ -237,31 +237,46 @@ def logout():
 #         </script>
 #     """, height=0)
 
+def init_global_master_audio():
+    """Initialize the global master audio element in the top window."""
+    audio_link = st.session_state.audio_file_link or ""
+    components.html(f"""
+            <script>
+                (function() {{
+                    const newSrc = "{audio_link}";
+                    
+                    // Check if audio element already exists in top window
+                    if (window.top.globalMasterAudio) {{
+                        // Only update src if it changed and is not empty
+                        if (newSrc && window.top.globalMasterAudio.src !== newSrc) {{
+                            window.top.globalMasterAudio.src = newSrc;
+                            console.log('Global master audio src updated:', newSrc);
+                        }}
+                        return;
+                    }}
+                    
+                    // Create the global master audio element
+                    const audio = document.createElement('audio');
+                    audio.id = 'globalMasterAudio';
+                    audio.preload = 'auto';
+                    audio.style.display = 'none';
+                    if (newSrc) {{
+                        audio.src = newSrc;
+                    }}
+                    
+                    // Append to top document body to prevent garbage collection
+                    window.top.document.body.appendChild(audio);
+
+                    // Log for debugging
+                    // console.log('Global master audio created:', audio);
+                }})();
+            </script>
+        """, height=0)
+    
 if 'audio_file_link' not in st.session_state:
     st.session_state.audio_file_link = None
 
-components.html(f"""
-        <script>
-            (function() {{
-                // Create the global master audio element
-
-                if (window.top.globalMasterAudio) {{
-                    window.top.globalMasterAudio.src = "{st.session_state.audio_file_link}";
-                    console.log('Global master audio updated:', window.top.globalMasterAudio);
-                    return;
-                }}
-                const audio = document.createElement('audio');
-                audio.id = 'globalMasterAudio';
-                audio.preload = 'auto';
-                audio.style.display = 'none';
-                audio.src = "{st.session_state.audio_file_link}";
-                window.top.globalMasterAudio = audio;
-
-                // Log for debugging
-                console.log('Global master audio created:', audio);
-            }})();
-        </script>
-    """, height=0)
+init_global_master_audio()
 
 
 def ensure_results_df() -> Optional[pd.DataFrame]:
