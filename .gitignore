@@ -19,3 +19,4 @@ input/test5.wav
 input/test6.wav
 mlruns
 mlartifacts
+./rclone.conf
