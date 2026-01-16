@@ -3,6 +3,7 @@ Streamlit frontend for Language Learning Difficulty Analyzer
 Provides audio upload, processing pipeline, and interactive results visualization.
 """
 
+import base64
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -13,7 +14,7 @@ import os
 import math
 from textwrap import dedent
 import dotenv
-from rclone_python import rclone
+import subprocess
 import json
 import numpy as np
 from datetime import datetime, timezone
@@ -26,6 +27,26 @@ from streamlit_cookies_manager import EncryptedCookieManager
 import threading
 
 dotenv.load_dotenv()
+
+def setup_rclone():
+    # 1. Get the base64 string from secrets
+    encoded_conf = os.getenv("RCLONE_CONFIG_CONTENT")
+    # encoded_conf = st.secrets.get("RCLONE_CONFIG_CONTENT", "")
+    
+    # 2. Decode the string
+    decoded_conf = base64.b64decode(encoded_conf).decode("utf-8")
+    
+    # 3. Path to save the config (Linux /tmp is best for Streamlit Cloud)
+    config_path = "rclone.conf"
+    
+    with open(config_path, "w") as f:
+        f.write(decoded_conf)
+
+    # with open(config_path, "r") as f:
+    #     content = f.read()
+    #     st.success(content)  # For debugging purposes
+    
+    return config_path
 
 # # Import your existing modules
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
@@ -40,6 +61,27 @@ st.set_page_config(
     page_icon="🎙️",
     layout="wide",
 )
+
+RCLONE_CONFIG = setup_rclone()
+RCLONE_BINARY = os.getenv("RCLONE_BINARY", "rclone") 
+
+# Testing related code for rclone:
+# remotes = rclone.get_remotes()
+
+# if remotes:
+#     remote_name = remotes[0] # Use the first one found (e.g., 'my-dropbox:')
+#     st.success(f"Found remote: {remote_name}")
+    
+#     # Try listing
+#     try:
+#         files = rclone.ls(f"{remote_name}omkar-internship/csv/")
+#         st.write(files)
+#     except Exception as e:
+#         st.error(f"Error: {e}")
+# else:
+#     st.error("No remotes found in the config file. Check your Base64 string.")
+
+
 
 # Hide cookie manager component with CSS
 st.markdown("""
@@ -103,7 +145,17 @@ if 'audio_snippets_cache' not in st.session_state:
     st.session_state.audio_snippets_cache = {}
 if 'dropbox_csv_files' not in st.session_state:
     try:
-        files = rclone.ls(f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}")
+        # files = rclone.ls(f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}")
+        
+        output = subprocess.check_output([
+            RCLONE_BINARY,
+            "lsjson",
+            f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH', '')}",
+            "--config", RCLONE_CONFIG
+        ]).decode("utf-8")
+        
+        files = json.loads(output)
+
         st.session_state.dropbox_csv_files = {f["Name"]: f["ID"] for f in files}
     except Exception as e:
         st.error(f"Error listing folder: {e}")
@@ -314,7 +366,13 @@ def load_user_data(user_id: str):
         try:
             # Download from Dropbox using rclone
             remote_path = f"dropbox:{json_folder}{user_file_name}"
-            rclone.copy(remote_path, tmp_dir)
+            # rclone.copy(remote_path, tmp_dir)
+            subprocess.run([
+                RCLONE_BINARY, "copy",
+                remote_path,
+                tmp_dir,
+                "--config", RCLONE_CONFIG
+            ], check=True)
             
             # Read the downloaded file
             downloaded_file = Path(tmp_dir) / user_file_name
@@ -374,7 +432,7 @@ def save_user(user, user_id: str = None):
             with open(temp_path, 'w') as f:
                 json.dump(user_serializable, f, indent=4)
             
-            upload_files([temp_path], dropbox_folder=folder_path)
+            upload_files([temp_path], dropbox_folder=folder_path, config_file=RCLONE_CONFIG, executable=RCLONE_BINARY)
     
     # Start the save operation in a background thread
     save_thread = threading.Thread(target=_save_task, daemon=True)
@@ -985,8 +1043,15 @@ with tab1:
                 try:
                     # Download from Dropbox using rclone
                     remote_path = f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}{selected_drive_file}"
-                    rclone.copy(remote_path, tmp_dir)
+                    # rclone.copy(remote_path, tmp_dir)
                     
+                    subprocess.run([
+                        RCLONE_BINARY, "copy",
+                        remote_path,
+                        tmp_dir,
+                        "--config", RCLONE_CONFIG
+                    ], check=True)
+
                     # Read the downloaded file
                     downloaded_file = Path(tmp_dir) / selected_drive_file
                     if load_csv_to_results(downloaded_file):
