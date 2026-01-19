@@ -1,4 +1,5 @@
 import os
+from utils.yt_wav_downloader import download_youtube_as_wav
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
 # from transcription.whisper_chunker import whisper_transcribe_chunks
 # from transcription.indic_chunker import indic_transcribe_chunks
@@ -8,7 +9,7 @@ import os
 # from transliteration.indic_en_trlit import transliterate_indic_to_english
 # from translation.indic_en_translation import translate_indic_to_english
 from utils.rclone_helper import upload_files
-from metrics.english_metrics import get_features
+# from metrics.english_metrics import get_features
 # from metrics.hindi_models import IndicReadabilityRH1, IndicReadabilityRH2
 # from metrics.wfr import WordFrequencyMetric
 # from metrics.sl import SentenceLengthMetric
@@ -23,16 +24,22 @@ dotenv.load_dotenv()  # Load environment variables from .env file
 
 
 BASE_DIR = Path(__file__).resolve().parent
-AUDIO_FILE_PATH = BASE_DIR / "input" / "test3.wav"
-OUTPUT_DIR = BASE_DIR / "output" / "test3_dialogues"
-TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / "test3_transcribed_output.pkl"
-PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / "test3_punctuated_output.txt"
-SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / "test3_sentences_output.txt"
-TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / "test3_transliteration_output.pkl"
-TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / "test3_translation_output.pkl"
-OUTPUT_CSV_FILE = BASE_DIR / "output" / "test3_results.csv"
+YOUTUBE_LINK = "https://www.youtube.com/watch?v=HY6DU2ABkSk" 
+AUDIO_FILE_DIR = BASE_DIR / "input"
 
-links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
+# Step 1: Download YouTube video as WAV audio
+link, AUDIO_FILE_PATH = download_youtube_as_wav(YOUTUBE_LINK, AUDIO_FILE_DIR)
+
+# Step 2: Update the other paths based on the downloaded audio file
+OUTPUT_DIR = BASE_DIR / "output" / AUDIO_FILE_PATH.stem
+TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transcribed_output.pkl"
+PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_punctuated_output.txt"
+SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_sentences_output.txt"
+TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transliteration_output.pkl"
+TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_translation_output.pkl"
+OUTPUT_CSV_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_results.csv"
+
+# links = upload_files([str(AUDIO_FILE_PATH)], os.getenv("DROPBOX_AUDIO_FOLDER_PATH"))
 
 # Audio segmentation based on silence
 # exported_chunk_paths = segment_dialogue(
@@ -153,7 +160,7 @@ data['difficulty'] = diffs
 
 data.index.name = 'id'
 
-data['original_audio_file'] = links[0]
+data['original_audio_file'] = link
 
 data.to_csv(OUTPUT_CSV_FILE)
 
