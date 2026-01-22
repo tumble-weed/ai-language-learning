@@ -25,6 +25,7 @@ from utils.rclone_helper import upload_files
 import requests
 from streamlit_cookies_manager import EncryptedCookieManager
 import threading
+import sys
 
 dotenv.load_dotenv()
 
@@ -179,6 +180,21 @@ if 'game_model' not in st.session_state:
     st.session_state.game_model = Glicko2Model()
 if 'game_scheduler' not in st.session_state:
     st.session_state.game_scheduler = Scheduler()
+if 'yt_processing' not in st.session_state:
+    st.session_state.yt_processing = False
+if 'yt_process' not in st.session_state:
+    st.session_state.yt_process = None
+if 'yt_link' not in st.session_state:
+    st.session_state.yt_link = ""
+if 'yt_job' not in st.session_state:
+    st.session_state.yt_job = {
+        "status": "idle",
+        "pid": None,
+        "link": "",
+        "started_at": None,
+        "finished_at": None,
+        "exit_code": None,
+    }
 
 # Translation game constants
 MIN_RATING = 600
@@ -274,6 +290,100 @@ def logout():
     cookies.save()
     
     st.rerun()
+
+
+def _set_yt_job(status: str, pid: Optional[int] = None, link: Optional[str] = None,
+                started_at: Optional[str] = None, finished_at: Optional[str] = None,
+                exit_code: Optional[int] = None) -> None:
+    """Update persisted YouTube job metadata and keep the running flag in sync."""
+    prev = st.session_state.get('yt_job', {})
+    st.session_state.yt_job = {
+        "status": status,
+        "pid": pid if pid is not None else prev.get("pid"),
+        "link": link if link is not None else prev.get("link"),
+        "started_at": started_at if started_at is not None else prev.get("started_at"),
+        "finished_at": finished_at if finished_at is not None else prev.get("finished_at"),
+        "exit_code": exit_code if exit_code is not None else prev.get("exit_code"),
+    }
+    st.session_state.yt_processing = status == "running"
+
+
+def _clear_yt_job() -> None:
+    """Reset YouTube job metadata."""
+    st.session_state.yt_process = None
+    _set_yt_job("idle", pid=None, link="", started_at=None, finished_at=None, exit_code=None)
+
+
+def refresh_yt_process_status(show_message: bool = False) -> None:
+    """Poll the running subprocess and persist status across reruns."""
+    proc = st.session_state.get('yt_process')
+    if proc is None:
+        return
+
+    poll_result = proc.poll()
+    if poll_result is None:
+        _set_yt_job("running", pid=proc.pid)
+        return
+
+    status = "finished" if poll_result == 0 else "failed"
+    _set_yt_job(
+        status,
+        pid=proc.pid,
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        exit_code=poll_result,
+    )
+    st.session_state.yt_process = None
+
+    if show_message:
+        if poll_result == 0:
+            st.success("✅ YouTube video processing completed successfully!")
+        else:
+            st.error(f"❌ YouTube video processing failed with exit code {poll_result}")
+
+
+def start_yt_process(yt_link: str) -> None:
+    """Start the YouTube processing subprocess and persist metadata."""
+    main_py_path = Path(__file__).resolve().parent / "main.py"
+    if not main_py_path.exists():
+        st.error(f"❌ main.py not found at {main_py_path}")
+        return
+
+    proc = subprocess.Popen(
+        [sys.executable, str(main_py_path), "--yt-link", yt_link],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+    )
+
+    st.session_state.yt_process = proc
+    st.session_state.yt_link = yt_link
+    _set_yt_job(
+        "running",
+        pid=proc.pid,
+        link=yt_link,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        finished_at=None,
+        exit_code=None,
+    )
+
+
+def cancel_yt_process() -> None:
+    """Terminate the running subprocess if any and persist the cancellation."""
+    proc = st.session_state.get('yt_process')
+    if proc is not None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    st.session_state.yt_process = None
+    _set_yt_job(
+        "cancelled",
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        exit_code=None,
+    )
 
 # Initialize global master audio element if audio link is available
 # if st.session_state.audio_file_link:
@@ -839,7 +949,10 @@ Analyze audio recordings to identify sentence difficulty based on readability me
 Upload an audio file, process it through the pipeline, and explore the results interactively.
 """)
 
-tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📂 Load Results", "📊 Results", "🎯 Practice", "🎮 Translation Game", "📝 Annotate", "ℹ️ About"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📂 Load Results", "🎥 YouTube Processor", "📊 Results", "🎯 Practice", "🎮 Translation Game", "📝 Annotate", "ℹ️ About"])
+
+# Check YouTube process status if one is running
+refresh_yt_process_status()
 
 with tab1:
     st.header("Load Existing Results")
@@ -1060,7 +1173,108 @@ with tab1:
                 except Exception as e:
                     st.error(f"❌ Error downloading file from Dropbox: {str(e)}")
                     st.exception(e)
+with tab2:
+    st.header("🎥 YouTube Video Processor")
+    
+    st.markdown("""
+    Process a YouTube video to generate language learning content.
+    Enter a YouTube video link below to start processing.
+    """)
 
+    refresh_yt_process_status()
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        yt_link_input = st.text_input(
+            "YouTube Video URL",
+            placeholder="https://www.youtube.com/watch?v=...",
+            help="Enter the full YouTube video URL",
+            value=st.session_state.yt_link,
+            disabled=st.session_state.yt_processing
+        )
+    
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align button with input
+        process_btn = st.button(
+            "🚀 Start Processing" if not st.session_state.yt_processing else "⏳ Processing...",
+            type="primary",
+            disabled=st.session_state.yt_processing,
+            use_container_width=True
+        )
+    
+    if process_btn and yt_link_input:
+        try:
+            st.session_state.yt_link = yt_link_input
+            start_yt_process(yt_link_input)
+            if st.session_state.yt_processing:
+                st.success(f"✅ Processing started for: {yt_link_input}")
+                st.info("⏳ The video is being processed in the background. You can continue using other tabs while waiting.")
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ Failed to start processing: {str(e)}")
+    
+    elif process_btn and not yt_link_input:
+        st.warning("⚠️ Please enter a YouTube video URL")
+    
+    st.divider()
+    
+    job = st.session_state.yt_job
+    status = job.get("status", "idle")
+
+    if status == "running":
+        st.info(f"⏳ Processing in progress (PID {job.get('pid')}).")
+        if job.get("started_at"):
+            st.caption(f"Started at: {job.get('started_at')}")
+        if job.get("link"):
+            st.caption(f"Link: {job.get('link')}")
+
+        cancel_col, _ = st.columns([1, 3])
+        if cancel_col.button("🛑 Cancel processing", type="secondary"):
+            cancel_yt_process()
+            st.warning("Processing cancelled.")
+            st.rerun()
+
+    elif status in {"finished", "failed", "cancelled"}:
+        if status == "finished":
+            st.success("✅ Processing finished.")
+        elif status == "failed":
+            st.error(f"❌ Processing failed (exit code {job.get('exit_code')}).")
+        else:
+            st.warning("⚠️ Processing was cancelled.")
+
+        if job.get("started_at") or job.get("finished_at"):
+            st.caption(
+                f"Started: {job.get('started_at') or 'N/A'} | Finished: {job.get('finished_at') or 'N/A'}"
+            )
+        if job.get("link"):
+            st.caption(f"Link: {job.get('link')}")
+
+        clear_col, _ = st.columns([1, 3])
+        if clear_col.button("Clear status", type="secondary"):
+            _clear_yt_job()
+            st.rerun()
+
+    else:
+        st.markdown("""
+        ### 📋 How to use:
+        
+        1. **Copy** a YouTube video URL
+        2. **Paste** it in the text box above
+        3. **Click** "Start Processing"
+        4. **Wait** for the processing to complete
+        5. **Load** the results from the "Load Results" tab
+        
+        ### ⏱️ Processing Time:
+        
+        Processing time varies based on:
+        - Video length
+        - Audio quality
+        - Number of speakers
+        - Language complexity
+        
+        Typical processing time: 2-10 minutes for a 5-minute video.
+        """)
 with tab3:
     st.header("Analysis Results")
     
