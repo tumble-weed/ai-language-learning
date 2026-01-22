@@ -186,15 +186,54 @@ if 'yt_process' not in st.session_state:
     st.session_state.yt_process = None
 if 'yt_link' not in st.session_state:
     st.session_state.yt_link = ""
-if 'yt_job' not in st.session_state:
-    st.session_state.yt_job = {
-        "status": "idle",
-        "pid": None,
-        "link": "",
-        "started_at": None,
-        "finished_at": None,
-        "exit_code": None,
-    }
+# Initialize or restore yt_job from cookies (fast) or Dropbox (fallback)
+# This runs every page load to ensure we have the latest state
+if st.session_state.get('authenticated', False) and st.session_state.get('user_info'):
+    yt_job_loaded = False
+    
+    # Try loading from cookies first (fastest)
+    try:
+        yt_job_cookie = cookies.get('yt_job')
+        if yt_job_cookie:
+            st.session_state.yt_job = json.loads(yt_job_cookie)
+            yt_job_loaded = True
+    except Exception:
+        pass
+    
+    # If not in cookies, load from Dropbox
+    if not yt_job_loaded:
+        try:
+            st.session_state.yt_job = load_yt_job_from_dropbox()
+            yt_job_loaded = True
+        except Exception:
+            pass
+    
+    # If still not loaded, initialize to idle
+    if not yt_job_loaded:
+        st.session_state.yt_job = {
+            "status": "idle",
+            "pid": None,
+            "link": "",
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": None,
+        }
+    
+    # Restore yt_link from loaded job
+    if st.session_state.yt_job.get('link'):
+        st.session_state.yt_link = st.session_state.yt_job['link']
+    # Restore yt_processing flag
+    st.session_state.yt_processing = st.session_state.yt_job.get('status') == 'running'
+else:
+    if 'yt_job' not in st.session_state:
+        st.session_state.yt_job = {
+            "status": "idle",
+            "pid": None,
+            "link": "",
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": None,
+        }
 
 # Translation game constants
 MIN_RATING = 600
@@ -292,6 +331,92 @@ def logout():
     st.rerun()
 
 
+def save_yt_job_to_dropbox(job_data: dict) -> None:
+    """Save YouTube job metadata to both cookies (fast) and Dropbox (persistent)."""
+    user_id = st.session_state.user_info.get('id', 'anonymous') if st.session_state.user_info else 'anonymous'
+    job_file_name = f"{user_id}.json"
+    
+    # Don't save if data hasn't changed (avoid redundant uploads)
+    if st.session_state.get('_last_saved_yt_job') == job_data:
+        return
+    
+    # Mark as saved
+    st.session_state._last_saved_yt_job = job_data.copy()
+    
+    # Save to cookies for instant retrieval on next page load
+    try:
+        cookies['yt_job'] = json.dumps(job_data)
+        cookies.save()
+    except Exception:
+        pass  # If cookies fail, Dropbox will still save it
+    
+    def _save_task():
+        folder_path = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_path = Path(tmp_dir) / job_file_name
+            remote_path = f"dropbox:{folder_path}{job_file_name}"
+
+            payload: Dict = {}
+            # Try to download existing user file so we preserve other fields
+            try:
+                subprocess.run(
+                    [RCLONE_BINARY, "copy", remote_path, tmp_dir, "--config", RCLONE_CONFIG],
+                    check=True,
+                    capture_output=True,
+                )
+                if temp_path.exists():
+                    with open(temp_path, 'r') as f:
+                        payload = json.load(f)
+            except Exception:
+                payload = {}
+
+            payload["yt_job"] = [job_data]
+
+            with open(temp_path, 'w') as f:
+                json.dump(payload, f, indent=4)
+
+            upload_files([temp_path], dropbox_folder=folder_path, config_file=RCLONE_CONFIG, executable=RCLONE_BINARY)
+    
+    save_thread = threading.Thread(target=_save_task, daemon=True)
+    save_thread.start()
+
+
+def load_yt_job_from_dropbox() -> dict:
+    """Load YouTube job metadata from Dropbox."""
+    user_id = st.session_state.user_info.get('id', 'anonymous') if st.session_state.user_info else 'anonymous'
+    job_file_name = f"{user_id}.json"
+    json_folder = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            remote_path = f"dropbox:{json_folder}{job_file_name}"
+            subprocess.run([
+                RCLONE_BINARY, "copy",
+                remote_path,
+                tmp_dir,
+                "--config", RCLONE_CONFIG
+            ], check=True, capture_output=True)
+            
+            downloaded_file = Path(tmp_dir) / job_file_name
+            if downloaded_file.exists():
+                with open(downloaded_file, 'r') as f:
+                    data = json.load(f)
+                jobs = data.get("yt_job") if isinstance(data, dict) else None
+                if isinstance(jobs, list) and jobs:
+                    return jobs[0]
+        except Exception:
+            pass
+    
+    return {
+        "status": "idle",
+        "pid": None,
+        "link": "",
+        "started_at": None,
+        "finished_at": None,
+        "exit_code": None,
+    }
+
+
 def _set_yt_job(status: str, pid: Optional[int] = None, link: Optional[str] = None,
                 started_at: Optional[str] = None, finished_at: Optional[str] = None,
                 exit_code: Optional[int] = None) -> None:
@@ -306,17 +431,50 @@ def _set_yt_job(status: str, pid: Optional[int] = None, link: Optional[str] = No
         "exit_code": exit_code if exit_code is not None else prev.get("exit_code"),
     }
     st.session_state.yt_processing = status == "running"
+    
+    # Save to Dropbox for persistence across page refreshes (stored under yt_job list)
+    save_yt_job_to_dropbox(st.session_state.yt_job)
 
 
 def _clear_yt_job() -> None:
-    """Reset YouTube job metadata."""
+    """Reset YouTube job metadata and clear from cookies and Dropbox."""
     st.session_state.yt_process = None
+    st.session_state.yt_link = ""
+    # Clear cookie
+    try:
+        cookies['yt_job'] = ''
+        cookies.save()
+    except Exception:
+        pass
     _set_yt_job("idle", pid=None, link="", started_at=None, finished_at=None, exit_code=None)
 
 
 def refresh_yt_process_status(show_message: bool = False) -> None:
     """Poll the running subprocess and persist status across reruns."""
     proc = st.session_state.get('yt_process')
+    job = st.session_state.get('yt_job', {})
+    
+    # If we have a job marked as running but no process object, try to reconnect
+    if proc is None and job.get('status') == 'running' and job.get('pid'):
+        try:
+            # Check if the process is still alive
+            import psutil
+            if psutil.pid_exists(job['pid']):
+                # Process exists but we can't control it after page refresh
+                # Just keep checking until it finishes
+                return
+            else:
+                # Process is gone, mark as finished (we don't know exit code)
+                _set_yt_job(
+                    "finished",
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                    exit_code=0,
+                )
+        except ImportError:
+            # psutil not available, just return
+            return
+        return
+    
     if proc is None:
         return
 
@@ -529,6 +687,22 @@ def save_user(user, user_id: str = None):
         folder_path = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_path = Path(tmp_dir) / user_file_name
+            remote_path = f"dropbox:{folder_path}{user_file_name}"
+
+            # Start with any existing payload to avoid clobbering unrelated fields (e.g., yt_job)
+            payload: Dict = {}
+            try:
+                subprocess.run(
+                    [RCLONE_BINARY, "copy", remote_path, tmp_dir, "--config", RCLONE_CONFIG],
+                    check=True,
+                    capture_output=True,
+                )
+                if temp_path.exists():
+                    with open(temp_path, 'r') as f:
+                        payload = json.load(f)
+            except Exception:
+                payload = {}
+
             # Convert Card objects to dicts for JSON serialization
             history_serializable = {}
             for sid, obj in user["history"].items():
@@ -539,8 +713,11 @@ def save_user(user, user_id: str = None):
             user_serializable = user.copy()
             user_serializable["history"] = history_serializable
 
+            # Merge: keep existing payload fields (like yt_job) and update/replace user data fields
+            payload.update(user_serializable)
+
             with open(temp_path, 'w') as f:
-                json.dump(user_serializable, f, indent=4)
+                json.dump(payload, f, indent=4)
             
             upload_files([temp_path], dropbox_folder=folder_path, config_file=RCLONE_CONFIG, executable=RCLONE_BINARY)
     
@@ -951,9 +1128,6 @@ Upload an audio file, process it through the pipeline, and explore the results i
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📂 Load Results", "🎥 YouTube Processor", "📊 Results", "🎯 Practice", "🎮 Translation Game", "📝 Annotate", "ℹ️ About"])
 
-# Check YouTube process status if one is running
-refresh_yt_process_status()
-
 with tab1:
     st.header("Load Existing Results")
     
@@ -1181,7 +1355,9 @@ with tab2:
     Enter a YouTube video link below to start processing.
     """)
 
-    refresh_yt_process_status()
+    # Only refresh process status if we have a running or recent process
+    if st.session_state.yt_job.get('status') in {'running', 'finished', 'failed', 'cancelled'}:
+        refresh_yt_process_status()
     
     col1, col2 = st.columns([3, 1])
     

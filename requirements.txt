@@ -24,3 +24,4 @@ google-auth-oauthlib==1.2.3
 google-auth
 streamlit-cookies-manager
 yt-dlp
+psutil
