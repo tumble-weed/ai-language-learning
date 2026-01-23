@@ -10,3 +10,4 @@ mlruns
 mlartifacts
 rclone.conf
 .vscode/
+jsons/

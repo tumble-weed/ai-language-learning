@@ -113,7 +113,7 @@ try:
                 'audio_file_path': str(AUDIO_FILE_PATH),
                 'dropbox_link': DROPBOX_LINK
             }
-            with open(BASE_DIR / f"{AUDIO_FILE_PATH.stem}.json", 'w', encoding='utf-8') as f:
+            with open(BASE_DIR / "jsons" / f"{AUDIO_FILE_PATH.stem}.json", 'w', encoding='utf-8') as f:
                 json.dump(params, f, ensure_ascii=False, indent=4)
 except Exception as e:
     print(f"Error during download step: {e}")
