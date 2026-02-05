@@ -33,6 +33,7 @@ AUDIO_FILE_DIR = BASE_DIR / "input"
 CONTINUE_FROM = 'download'  # Default step to start from
 YOUTUBE_LINK = None
 AUDIO_FILE_PATH = None  # Initialize AUDIO_FILE_PATH
+CONTINUE_TILL = 'metrics'  # Default step to end at
 link = None
 
 STEPS = [
@@ -46,6 +47,13 @@ STEPS = [
     'translate',
     'metrics',
 ]
+
+# TODO: Complete this map for indian languages
+# How many languages are we targeting? 
+lang_map = {
+    'mr': 'mr',
+    'te': 'te'
+}
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Language Learning Pipeline.")
@@ -71,19 +79,32 @@ def parse_arguments():
         help='YouTube link of the video to be processed.'
     )
 
+    parser.add_argument(
+        '--continue-till',
+        type=str,
+        choices=STEPS,
+        default='metrics',
+        help=f'Continue execution till a specific step. Choose from: {", ".join(STEPS)}'
+    )
+
     return parser.parse_args()
 
 def get_step_index(step_name):
     return STEPS.index(step_name)
 
-def should_execute(current_step, continue_from):
-    return get_step_index(current_step) >= get_step_index(continue_from)
+def should_execute(current_step, continue_from, continue_till):
+    return get_step_index(current_step) >= get_step_index(continue_from) and get_step_index(current_step) <= get_step_index(continue_till)
 
 
 args = parse_arguments()
 CONTINUE_FROM = args.continue_from
+CONTINUE_TILL = args.continue_till
 INPUT_FILE = args.i
 YOUTUBE_LINK = args.yt_link
+
+if get_step_index(CONTINUE_FROM) > get_step_index(CONTINUE_TILL):
+    print("ERROR: --continue-from step cannot be after --continue-till step.")
+    sys.exit(1)
 
 if not YOUTUBE_LINK:
     print("ERROR: YouTube link must be provided via --yt-link argument.")
@@ -103,7 +124,7 @@ if INPUT_FILE:
 
 # Step 1: Download YouTube video as WAV audio
 try:
-    if (should_execute('download', CONTINUE_FROM)):
+    if (should_execute('download', CONTINUE_FROM, CONTINUE_TILL)):
         DROPBOX_LINK, AUDIO_FILE_PATH = download_youtube_as_wav(YOUTUBE_LINK, AUDIO_FILE_DIR)
         if not AUDIO_FILE_PATH:
             raise Exception("AUDIO_FILE_PATH must be defined when continuing from a later step.")
@@ -113,6 +134,7 @@ try:
                 'audio_file_path': str(AUDIO_FILE_PATH),
                 'dropbox_link': DROPBOX_LINK
             }
+            os.makedirs(BASE_DIR / "jsons", exist_ok=True)
             with open(BASE_DIR / "jsons" / f"{AUDIO_FILE_PATH.stem}.json", 'w', encoding='utf-8') as f:
                 json.dump(params, f, ensure_ascii=False, indent=4)
 except Exception as e:
@@ -135,7 +157,7 @@ TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transla
 OUTPUT_CSV_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_results.csv"
 
 # Audio segmentation based on silence
-if (should_execute('segment', CONTINUE_FROM)):
+if (should_execute('segment', CONTINUE_FROM, CONTINUE_TILL)):
     exported_chunk_paths = segment_dialogue(
         audio_file_path=AUDIO_FILE_PATH,
         output_dir=OUTPUT_DIR
@@ -149,7 +171,7 @@ if (should_execute('segment', CONTINUE_FROM)):
 
 
 # Transcribe audio-to-text (whisper)
-# if (should_execute('transcribe', CONTINUE_FROM)):
+# if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
 #     transcribed_text = whisper_transcribe_chunks(
 #         input_dir=OUTPUT_DIR,
 #         output_file=TRANSCRIBE_OUTPUT_FILE
@@ -157,10 +179,10 @@ if (should_execute('segment', CONTINUE_FROM)):
 
 # TODO: Have a standard lang_code variable across the pipeline
 # Transcrib1e audio-to-text (indic)
-if (should_execute('transcribe', CONTINUE_FROM)):
+if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         transcribed_text = indic_transcribe_chunks(
-            lang_code='mr',
+            lang_code='te',
             exported_chunk_paths=exported_chunk_paths,
             output_file=TRANSCRIBE_OUTPUT_FILE
         )
@@ -169,7 +191,7 @@ if (should_execute('transcribe', CONTINUE_FROM)):
         sys.exit(1)
 
 # Punctuation restoration
-if (should_execute('punctuate', CONTINUE_FROM)):
+if (should_execute('punctuate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         transcribed_text = {}
         with TRANSCRIBE_OUTPUT_FILE.open('rb') as f_in:
@@ -187,14 +209,14 @@ if (should_execute('punctuate', CONTINUE_FROM)):
         sys.exit(1)
 
 # Preprocessing
-if (should_execute('preprocess', CONTINUE_FROM)):
+if (should_execute('preprocess', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         preprocessed_text = []
         with PUNCTUATED_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
             # Get first line
             punc_text = f_in.read()
 
-            preprocessed_text = preprocess_text(punc_text, 'mar_Deva')
+            preprocessed_text = preprocess_text(punc_text, 'tel_Telu')
 
             with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
                 f_out.write("\n".join(preprocessed_text))
@@ -208,7 +230,7 @@ if (should_execute('preprocess', CONTINUE_FROM)):
 
 
 # After preprocessing, Identify the the proper timestamp for each sentenc chunk and get the corresponding audio file.
-if (should_execute('align', CONTINUE_FROM)):
+if (should_execute('align', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         with SENTENCE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('rb') as t_in:
             transcribed_text = pickle.load(t_in)
@@ -225,7 +247,7 @@ if (should_execute('align', CONTINUE_FROM)):
 
 
 # Transliteration
-if (should_execute('transliterate', CONTINUE_FROM)):
+if (should_execute('transliterate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         with ALIGNED_OUTPUT_FILE.open('rb') as f_in:
             aligned_result = pickle.load(f_in)
@@ -242,7 +264,7 @@ if (should_execute('transliterate', CONTINUE_FROM)):
 
 
 # Translation
-if (should_execute('translate', CONTINUE_FROM)):
+if (should_execute('translate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         with TRANSLITERATION_OUTPUT_FILE.open('rb') as f_in:
             aligned_result = pickle.load(f_in)
@@ -265,7 +287,7 @@ if (should_execute('translate', CONTINUE_FROM)):
         sys.exit(1)
 
 # Metrics Calculation
-if (should_execute('metrics', CONTINUE_FROM)):
+if (should_execute('metrics', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         with TRANSLATION_OUTPUT_FILE.open('rb') as f_in:
             translated_result = pickle.load(f_in)
@@ -296,4 +318,4 @@ if (should_execute('metrics', CONTINUE_FROM)):
         sys.exit(1)
 
 
-# TODO: Clean up intermediate files only after reaching the end successfully
+# TODO: Clean up intermediate files only after reaching the end successfully. 
