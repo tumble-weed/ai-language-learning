@@ -7,7 +7,7 @@ Processing incomplete sentences.
 import fasttext
 import os
 
-INDICLID_MODEL_PATH = "C:\\Users\\OMKAR VIJAY JAGTAP\\Documents\\Language Learning\\indiclid-ftn\\model_baseline_roman.bin"
+INDICLID_MODEL_PATH = ".\\indiclid-ftn\\model_baseline_roman.bin"
 indiclid_model = fasttext.load_model(INDICLID_MODEL_PATH)
 
 lang_code_map = {
