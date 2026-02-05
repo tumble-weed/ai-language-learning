@@ -3,6 +3,7 @@ Streamlit frontend for Language Learning Difficulty Analyzer
 Provides audio upload, processing pipeline, and interactive results visualization.
 """
 
+import base64
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -13,7 +14,7 @@ import os
 import math
 from textwrap import dedent
 import dotenv
-from rclone_python import rclone
+import subprocess
 import json
 import numpy as np
 from datetime import datetime, timezone
@@ -24,8 +25,29 @@ from utils.rclone_helper import upload_files
 import requests
 from streamlit_cookies_manager import EncryptedCookieManager
 import threading
+import sys
 
 dotenv.load_dotenv()
+
+def setup_rclone():
+    # 1. Get the base64 string from secrets
+    encoded_conf = os.getenv("RCLONE_CONFIG_CONTENT")
+    # encoded_conf = st.secrets.get("RCLONE_CONFIG_CONTENT", "")
+    
+    # 2. Decode the string
+    decoded_conf = base64.b64decode(encoded_conf).decode("utf-8")
+    
+    # 3. Path to save the config (Linux /tmp is best for Streamlit Cloud)
+    config_path = "rclone.conf"
+    
+    with open(config_path, "w") as f:
+        f.write(decoded_conf)
+
+    # with open(config_path, "r") as f:
+    #     content = f.read()
+    #     st.success(content)  # For debugging purposes
+    
+    return config_path
 
 # # Import your existing modules
 # from segmentation.webrtc_dialogue_segmentation import segment_dialogue
@@ -40,6 +62,27 @@ st.set_page_config(
     page_icon="🎙️",
     layout="wide",
 )
+
+RCLONE_CONFIG = setup_rclone()
+RCLONE_BINARY = os.getenv("RCLONE_BINARY", "rclone") 
+
+# Testing related code for rclone:
+# remotes = rclone.get_remotes()
+
+# if remotes:
+#     remote_name = remotes[0] # Use the first one found (e.g., 'my-dropbox:')
+#     st.success(f"Found remote: {remote_name}")
+    
+#     # Try listing
+#     try:
+#         files = rclone.ls(f"{remote_name}omkar-internship/csv/")
+#         st.write(files)
+#     except Exception as e:
+#         st.error(f"Error: {e}")
+# else:
+#     st.error("No remotes found in the config file. Check your Base64 string.")
+
+
 
 # Hide cookie manager component with CSS
 st.markdown("""
@@ -103,7 +146,17 @@ if 'audio_snippets_cache' not in st.session_state:
     st.session_state.audio_snippets_cache = {}
 if 'dropbox_csv_files' not in st.session_state:
     try:
-        files = rclone.ls(f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}")
+        # files = rclone.ls(f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}")
+        
+        output = subprocess.check_output([
+            RCLONE_BINARY,
+            "lsjson",
+            f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH', '')}",
+            "--config", RCLONE_CONFIG
+        ]).decode("utf-8")
+        
+        files = json.loads(output)
+
         st.session_state.dropbox_csv_files = {f["Name"]: f["ID"] for f in files}
     except Exception as e:
         st.error(f"Error listing folder: {e}")
@@ -127,6 +180,60 @@ if 'game_model' not in st.session_state:
     st.session_state.game_model = Glicko2Model()
 if 'game_scheduler' not in st.session_state:
     st.session_state.game_scheduler = Scheduler()
+if 'yt_processing' not in st.session_state:
+    st.session_state.yt_processing = False
+if 'yt_process' not in st.session_state:
+    st.session_state.yt_process = None
+if 'yt_link' not in st.session_state:
+    st.session_state.yt_link = ""
+# Initialize or restore yt_job from cookies (fast) or Dropbox (fallback)
+# This runs every page load to ensure we have the latest state
+if st.session_state.get('authenticated', False) and st.session_state.get('user_info'):
+    yt_job_loaded = False
+    
+    # Try loading from cookies first (fastest)
+    try:
+        yt_job_cookie = cookies.get('yt_job')
+        if yt_job_cookie:
+            st.session_state.yt_job = json.loads(yt_job_cookie)
+            yt_job_loaded = True
+    except Exception:
+        pass
+    
+    # If not in cookies, load from Dropbox
+    if not yt_job_loaded:
+        try:
+            st.session_state.yt_job = load_yt_job_from_dropbox()
+            yt_job_loaded = True
+        except Exception:
+            pass
+    
+    # If still not loaded, initialize to idle
+    if not yt_job_loaded:
+        st.session_state.yt_job = {
+            "status": "idle",
+            "pid": None,
+            "link": "",
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": None,
+        }
+    
+    # Restore yt_link from loaded job
+    if st.session_state.yt_job.get('link'):
+        st.session_state.yt_link = st.session_state.yt_job['link']
+    # Restore yt_processing flag
+    st.session_state.yt_processing = st.session_state.yt_job.get('status') == 'running'
+else:
+    if 'yt_job' not in st.session_state:
+        st.session_state.yt_job = {
+            "status": "idle",
+            "pid": None,
+            "link": "",
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": None,
+        }
 
 # Translation game constants
 MIN_RATING = 600
@@ -223,6 +330,219 @@ def logout():
     
     st.rerun()
 
+
+def save_yt_job_to_dropbox(job_data: dict) -> None:
+    """Save YouTube job metadata to both cookies (fast) and Dropbox (persistent)."""
+    user_id = st.session_state.user_info.get('id', 'anonymous') if st.session_state.user_info else 'anonymous'
+    job_file_name = f"{user_id}.json"
+    
+    # Don't save if data hasn't changed (avoid redundant uploads)
+    if st.session_state.get('_last_saved_yt_job') == job_data:
+        return
+    
+    # Mark as saved
+    st.session_state._last_saved_yt_job = job_data.copy()
+    
+    # Save to cookies for instant retrieval on next page load
+    try:
+        cookies['yt_job'] = json.dumps(job_data)
+        cookies.save()
+    except Exception:
+        pass  # If cookies fail, Dropbox will still save it
+    
+    def _save_task():
+        folder_path = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_path = Path(tmp_dir) / job_file_name
+            remote_path = f"dropbox:{folder_path}{job_file_name}"
+
+            payload: Dict = {}
+            # Try to download existing user file so we preserve other fields
+            try:
+                subprocess.run(
+                    [RCLONE_BINARY, "copy", remote_path, tmp_dir, "--config", RCLONE_CONFIG],
+                    check=True,
+                    capture_output=True,
+                )
+                if temp_path.exists():
+                    with open(temp_path, 'r') as f:
+                        payload = json.load(f)
+            except Exception:
+                payload = {}
+
+            payload["yt_job"] = [job_data]
+
+            with open(temp_path, 'w') as f:
+                json.dump(payload, f, indent=4)
+
+            upload_files([temp_path], dropbox_folder=folder_path, config_file=RCLONE_CONFIG, executable=RCLONE_BINARY)
+    
+    save_thread = threading.Thread(target=_save_task, daemon=True)
+    save_thread.start()
+
+
+def load_yt_job_from_dropbox() -> dict:
+    """Load YouTube job metadata from Dropbox."""
+    user_id = st.session_state.user_info.get('id', 'anonymous') if st.session_state.user_info else 'anonymous'
+    job_file_name = f"{user_id}.json"
+    json_folder = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            remote_path = f"dropbox:{json_folder}{job_file_name}"
+            subprocess.run([
+                RCLONE_BINARY, "copy",
+                remote_path,
+                tmp_dir,
+                "--config", RCLONE_CONFIG
+            ], check=True, capture_output=True)
+            
+            downloaded_file = Path(tmp_dir) / job_file_name
+            if downloaded_file.exists():
+                with open(downloaded_file, 'r') as f:
+                    data = json.load(f)
+                jobs = data.get("yt_job") if isinstance(data, dict) else None
+                if isinstance(jobs, list) and jobs:
+                    return jobs[0]
+        except Exception:
+            pass
+    
+    return {
+        "status": "idle",
+        "pid": None,
+        "link": "",
+        "started_at": None,
+        "finished_at": None,
+        "exit_code": None,
+    }
+
+
+def _set_yt_job(status: str, pid: Optional[int] = None, link: Optional[str] = None,
+                started_at: Optional[str] = None, finished_at: Optional[str] = None,
+                exit_code: Optional[int] = None) -> None:
+    """Update persisted YouTube job metadata and keep the running flag in sync."""
+    prev = st.session_state.get('yt_job', {})
+    st.session_state.yt_job = {
+        "status": status,
+        "pid": pid if pid is not None else prev.get("pid"),
+        "link": link if link is not None else prev.get("link"),
+        "started_at": started_at if started_at is not None else prev.get("started_at"),
+        "finished_at": finished_at if finished_at is not None else prev.get("finished_at"),
+        "exit_code": exit_code if exit_code is not None else prev.get("exit_code"),
+    }
+    st.session_state.yt_processing = status == "running"
+    
+    # Save to Dropbox for persistence across page refreshes (stored under yt_job list)
+    save_yt_job_to_dropbox(st.session_state.yt_job)
+
+
+def _clear_yt_job() -> None:
+    """Reset YouTube job metadata and clear from cookies and Dropbox."""
+    st.session_state.yt_process = None
+    st.session_state.yt_link = ""
+    # Clear cookie
+    try:
+        cookies['yt_job'] = ''
+        cookies.save()
+    except Exception:
+        pass
+    _set_yt_job("idle", pid=None, link="", started_at=None, finished_at=None, exit_code=None)
+
+
+def refresh_yt_process_status(show_message: bool = False) -> None:
+    """Poll the running subprocess and persist status across reruns."""
+    proc = st.session_state.get('yt_process')
+    job = st.session_state.get('yt_job', {})
+    
+    # If we have a job marked as running but no process object, try to reconnect
+    if proc is None and job.get('status') == 'running' and job.get('pid'):
+        try:
+            # Check if the process is still alive
+            import psutil
+            if psutil.pid_exists(job['pid']):
+                # Process exists but we can't control it after page refresh
+                # Just keep checking until it finishes
+                return
+            else:
+                # Process is gone, mark as finished (we don't know exit code)
+                _set_yt_job(
+                    "finished",
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                    exit_code=0,
+                )
+        except ImportError:
+            # psutil not available, just return
+            return
+        return
+    
+    if proc is None:
+        return
+
+    poll_result = proc.poll()
+    if poll_result is None:
+        _set_yt_job("running", pid=proc.pid)
+        return
+
+    status = "finished" if poll_result == 0 else "failed"
+    _set_yt_job(
+        status,
+        pid=proc.pid,
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        exit_code=poll_result,
+    )
+    st.session_state.yt_process = None
+
+    if show_message:
+        if poll_result == 0:
+            st.success("✅ YouTube video processing completed successfully!")
+        else:
+            st.error(f"❌ YouTube video processing failed with exit code {poll_result}")
+
+
+def start_yt_process(yt_link: str) -> None:
+    """Start the YouTube processing subprocess and persist metadata."""
+    main_py_path = Path(__file__).resolve().parent / "main.py"
+    if not main_py_path.exists():
+        st.error(f"❌ main.py not found at {main_py_path}")
+        return
+
+    proc = subprocess.Popen(
+        [sys.executable, str(main_py_path), "--yt-link", yt_link],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+    )
+
+    st.session_state.yt_process = proc
+    st.session_state.yt_link = yt_link
+    _set_yt_job(
+        "running",
+        pid=proc.pid,
+        link=yt_link,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        finished_at=None,
+        exit_code=None,
+    )
+
+
+def cancel_yt_process() -> None:
+    """Terminate the running subprocess if any and persist the cancellation."""
+    proc = st.session_state.get('yt_process')
+    if proc is not None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    st.session_state.yt_process = None
+    _set_yt_job(
+        "cancelled",
+        finished_at=datetime.now(timezone.utc).isoformat(),
+        exit_code=None,
+    )
+
 # Initialize global master audio element if audio link is available
 # if st.session_state.audio_file_link:
 #     components.html(f"""
@@ -237,31 +557,46 @@ def logout():
 #         </script>
 #     """, height=0)
 
+def init_global_master_audio():
+    """Initialize the global master audio element in the top window."""
+    audio_link = st.session_state.audio_file_link or ""
+    components.html(f"""
+            <script>
+                (function() {{
+                    const newSrc = "{audio_link}";
+                    
+                    // Check if audio element already exists in top window
+                    if (window.top.globalMasterAudio) {{
+                        // Only update src if it changed and is not empty
+                        if (newSrc && window.top.globalMasterAudio.src !== newSrc) {{
+                            window.top.globalMasterAudio.src = newSrc;
+                            console.log('Global master audio src updated:', newSrc);
+                        }}
+                        return;
+                    }}
+                    
+                    // Create the global master audio element
+                    const audio = document.createElement('audio');
+                    audio.id = 'globalMasterAudio';
+                    audio.preload = 'auto';
+                    audio.style.display = 'none';
+                    if (newSrc) {{
+                        audio.src = newSrc;
+                    }}
+                    
+                    // Append to top document body to prevent garbage collection
+                    window.top.document.body.appendChild(audio);
+
+                    // Log for debugging
+                    // console.log('Global master audio created:', audio);
+                }})();
+            </script>
+        """, height=0)
+    
 if 'audio_file_link' not in st.session_state:
     st.session_state.audio_file_link = None
 
-components.html(f"""
-        <script>
-            (function() {{
-                // Create the global master audio element
-
-                if (window.top.globalMasterAudio) {{
-                    window.top.globalMasterAudio.src = "{st.session_state.audio_file_link}";
-                    console.log('Global master audio updated:', window.top.globalMasterAudio);
-                    return;
-                }}
-                const audio = document.createElement('audio');
-                audio.id = 'globalMasterAudio';
-                audio.preload = 'auto';
-                audio.style.display = 'none';
-                audio.src = "{st.session_state.audio_file_link}";
-                window.top.globalMasterAudio = audio;
-
-                // Log for debugging
-                console.log('Global master audio created:', audio);
-            }})();
-        </script>
-    """, height=0)
+init_global_master_audio()
 
 
 def ensure_results_df() -> Optional[pd.DataFrame]:
@@ -299,7 +634,13 @@ def load_user_data(user_id: str):
         try:
             # Download from Dropbox using rclone
             remote_path = f"dropbox:{json_folder}{user_file_name}"
-            rclone.copy(remote_path, tmp_dir)
+            # rclone.copy(remote_path, tmp_dir)
+            subprocess.run([
+                RCLONE_BINARY, "copy",
+                remote_path,
+                tmp_dir,
+                "--config", RCLONE_CONFIG
+            ], check=True)
             
             # Read the downloaded file
             downloaded_file = Path(tmp_dir) / user_file_name
@@ -346,6 +687,22 @@ def save_user(user, user_id: str = None):
         folder_path = os.getenv('DROPBOX_USERS_FOLDER_PATH', '')
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_path = Path(tmp_dir) / user_file_name
+            remote_path = f"dropbox:{folder_path}{user_file_name}"
+
+            # Start with any existing payload to avoid clobbering unrelated fields (e.g., yt_job)
+            payload: Dict = {}
+            try:
+                subprocess.run(
+                    [RCLONE_BINARY, "copy", remote_path, tmp_dir, "--config", RCLONE_CONFIG],
+                    check=True,
+                    capture_output=True,
+                )
+                if temp_path.exists():
+                    with open(temp_path, 'r') as f:
+                        payload = json.load(f)
+            except Exception:
+                payload = {}
+
             # Convert Card objects to dicts for JSON serialization
             history_serializable = {}
             for sid, obj in user["history"].items():
@@ -356,10 +713,13 @@ def save_user(user, user_id: str = None):
             user_serializable = user.copy()
             user_serializable["history"] = history_serializable
 
+            # Merge: keep existing payload fields (like yt_job) and update/replace user data fields
+            payload.update(user_serializable)
+
             with open(temp_path, 'w') as f:
-                json.dump(user_serializable, f, indent=4)
+                json.dump(payload, f, indent=4)
             
-            upload_files([temp_path], dropbox_folder=folder_path)
+            upload_files([temp_path], dropbox_folder=folder_path, config_file=RCLONE_CONFIG, executable=RCLONE_BINARY)
     
     # Start the save operation in a background thread
     save_thread = threading.Thread(target=_save_task, daemon=True)
@@ -766,7 +1126,7 @@ Analyze audio recordings to identify sentence difficulty based on readability me
 Upload an audio file, process it through the pipeline, and explore the results interactively.
 """)
 
-tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📂 Load Results", "📊 Results", "🎯 Practice", "🎮 Translation Game", "📝 Annotate", "ℹ️ About"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📂 Load Results", "🎥 YouTube Processor", "📊 Results", "🎯 Practice", "🎮 Translation Game", "📝 Annotate", "ℹ️ About"])
 
 with tab1:
     st.header("Load Existing Results")
@@ -970,8 +1330,15 @@ with tab1:
                 try:
                     # Download from Dropbox using rclone
                     remote_path = f"dropbox:{os.getenv('DROPBOX_CSV_FOLDER_PATH','')}{selected_drive_file}"
-                    rclone.copy(remote_path, tmp_dir)
+                    # rclone.copy(remote_path, tmp_dir)
                     
+                    subprocess.run([
+                        RCLONE_BINARY, "copy",
+                        remote_path,
+                        tmp_dir,
+                        "--config", RCLONE_CONFIG
+                    ], check=True)
+
                     # Read the downloaded file
                     downloaded_file = Path(tmp_dir) / selected_drive_file
                     if load_csv_to_results(downloaded_file):
@@ -980,7 +1347,110 @@ with tab1:
                 except Exception as e:
                     st.error(f"❌ Error downloading file from Dropbox: {str(e)}")
                     st.exception(e)
+with tab2:
+    st.header("🎥 YouTube Video Processor")
+    
+    st.markdown("""
+    Process a YouTube video to generate language learning content.
+    Enter a YouTube video link below to start processing.
+    """)
 
+    # Only refresh process status if we have a running or recent process
+    if st.session_state.yt_job.get('status') in {'running', 'finished', 'failed', 'cancelled'}:
+        refresh_yt_process_status()
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        yt_link_input = st.text_input(
+            "YouTube Video URL",
+            placeholder="https://www.youtube.com/watch?v=...",
+            help="Enter the full YouTube video URL",
+            value=st.session_state.yt_link,
+            disabled=st.session_state.yt_processing
+        )
+    
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align button with input
+        process_btn = st.button(
+            "🚀 Start Processing" if not st.session_state.yt_processing else "⏳ Processing...",
+            type="primary",
+            disabled=st.session_state.yt_processing,
+            use_container_width=True
+        )
+    
+    if process_btn and yt_link_input:
+        try:
+            st.session_state.yt_link = yt_link_input
+            start_yt_process(yt_link_input)
+            if st.session_state.yt_processing:
+                st.success(f"✅ Processing started for: {yt_link_input}")
+                st.info("⏳ The video is being processed in the background. You can continue using other tabs while waiting.")
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ Failed to start processing: {str(e)}")
+    
+    elif process_btn and not yt_link_input:
+        st.warning("⚠️ Please enter a YouTube video URL")
+    
+    st.divider()
+    
+    job = st.session_state.yt_job
+    status = job.get("status", "idle")
+
+    if status == "running":
+        st.info(f"⏳ Processing in progress (PID {job.get('pid')}).")
+        if job.get("started_at"):
+            st.caption(f"Started at: {job.get('started_at')}")
+        if job.get("link"):
+            st.caption(f"Link: {job.get('link')}")
+
+        cancel_col, _ = st.columns([1, 3])
+        if cancel_col.button("🛑 Cancel processing", type="secondary"):
+            cancel_yt_process()
+            st.warning("Processing cancelled.")
+            st.rerun()
+
+    elif status in {"finished", "failed", "cancelled"}:
+        if status == "finished":
+            st.success("✅ Processing finished.")
+        elif status == "failed":
+            st.error(f"❌ Processing failed (exit code {job.get('exit_code')}).")
+        else:
+            st.warning("⚠️ Processing was cancelled.")
+
+        if job.get("started_at") or job.get("finished_at"):
+            st.caption(
+                f"Started: {job.get('started_at') or 'N/A'} | Finished: {job.get('finished_at') or 'N/A'}"
+            )
+        if job.get("link"):
+            st.caption(f"Link: {job.get('link')}")
+
+        clear_col, _ = st.columns([1, 3])
+        if clear_col.button("Clear status", type="secondary"):
+            _clear_yt_job()
+            st.rerun()
+
+    else:
+        st.markdown("""
+        ### 📋 How to use:
+        
+        1. **Copy** a YouTube video URL
+        2. **Paste** it in the text box above
+        3. **Click** "Start Processing"
+        4. **Wait** for the processing to complete
+        5. **Load** the results from the "Load Results" tab
+        
+        ### ⏱️ Processing Time:
+        
+        Processing time varies based on:
+        - Video length
+        - Audio quality
+        - Number of speakers
+        - Language complexity
+        
+        Typical processing time: 2-10 minutes for a 5-minute video.
+        """)
 with tab3:
     st.header("Analysis Results")
     
