@@ -30,10 +30,7 @@ dotenv.load_dotenv()  # Load environment variables from .env file
 
 BASE_DIR = Path(__file__).resolve().parent
 AUDIO_FILE_DIR = BASE_DIR / "input"
-CONTINUE_FROM = 'download'  # Default step to start from
-YOUTUBE_LINK = None
 AUDIO_FILE_PATH = None  # Initialize AUDIO_FILE_PATH
-CONTINUE_TILL = 'metrics'  # Default step to end at
 link = None
 
 STEPS = [
@@ -51,8 +48,28 @@ STEPS = [
 # TODO: Complete this map for indian languages
 # How many languages are we targeting? 
 lang_map = {
-    'mr': 'mr',
-    'te': 'te'
+    'assamese': 'as',
+    'bengali': 'bn',
+    'bodo': 'brx',
+    'dogri': 'doi',
+    'gujarati': 'gu',
+    'hindi': 'hi',
+    'kannada': 'kn',
+    'kashmiri': 'ks',
+    'konkani': 'kok',
+    'maithili': 'mai',
+    'malayalam': 'ml',
+    'manipuri': 'mni',
+    'marathi': 'mr',
+    'nepali': 'ne',
+    'oriya': 'or',
+    'punjabi': 'pa',
+    'sanskrit': 'sa',
+    'santali': 'sat',
+    'sindhi': 'sd',
+    'tamil': 'ta',
+    'telugu': 'te',
+    'urdu': 'ur',
 }
 
 def parse_arguments():
@@ -87,6 +104,12 @@ def parse_arguments():
         help=f'Continue execution till a specific step. Choose from: {", ".join(STEPS)}'
     )
 
+    parser.add_argument(
+        '--lang',
+        type=str,
+        default='marathi',
+    )
+
     return parser.parse_args()
 
 def get_step_index(step_name):
@@ -101,6 +124,7 @@ CONTINUE_FROM = args.continue_from
 CONTINUE_TILL = args.continue_till
 INPUT_FILE = args.i
 YOUTUBE_LINK = args.yt_link
+LANGUAGE = args.lang
 
 if get_step_index(CONTINUE_FROM) > get_step_index(CONTINUE_TILL):
     print("ERROR: --continue-from step cannot be after --continue-till step.")
@@ -117,6 +141,7 @@ if INPUT_FILE:
             params = json.load(f)
             AUDIO_FILE_PATH = Path(params.get('audio_file_path', None))
             DROPBOX_LINK = params.get('dropbox_link', None)
+            LANGUAGE = params.get('language', 'marathi')
     except Exception as e:
         print(f"Error reading input file {INPUT_FILE}: {e}")
         sys.exit(1)
@@ -132,7 +157,8 @@ try:
             # create a json file to store youtube link, audio file path and dropbox link
             params = {
                 'audio_file_path': str(AUDIO_FILE_PATH),
-                'dropbox_link': DROPBOX_LINK
+                'dropbox_link': DROPBOX_LINK,
+                'language': LANGUAGE
             }
             os.makedirs(BASE_DIR / "jsons", exist_ok=True)
             with open(BASE_DIR / "jsons" / f"{AUDIO_FILE_PATH.stem}.json", 'w', encoding='utf-8') as f:
@@ -147,6 +173,7 @@ if not AUDIO_FILE_PATH:
     sys.exit(1)
     
 # Step 2: Update the other paths based on the downloaded audio file
+# TODO: Use json instead of pkl
 OUTPUT_DIR = BASE_DIR / "output" / AUDIO_FILE_PATH.stem
 TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transcribed_output.pkl"
 PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_punctuated_output.txt"
@@ -182,7 +209,7 @@ if (should_execute('segment', CONTINUE_FROM, CONTINUE_TILL)):
 if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         transcribed_text = indic_transcribe_chunks(
-            lang_code='te',
+            lang_code=lang_map.get(LANGUAGE.lower(), 'mr'),  # Default to Marathi if language not found
             exported_chunk_paths=exported_chunk_paths,
             output_file=TRANSCRIBE_OUTPUT_FILE
         )
@@ -216,7 +243,7 @@ if (should_execute('preprocess', CONTINUE_FROM, CONTINUE_TILL)):
             # Get first line
             punc_text = f_in.read()
 
-            preprocessed_text = preprocess_text(punc_text, 'tel_Telu')
+            preprocessed_text = preprocess_text(punc_text, lang_map.get(LANGUAGE.lower(), 'mr'))
 
             with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
                 f_out.write("\n".join(preprocessed_text))
