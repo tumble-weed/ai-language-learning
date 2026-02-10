@@ -124,7 +124,7 @@ CONTINUE_FROM = args.continue_from
 CONTINUE_TILL = args.continue_till
 INPUT_FILE = args.i
 YOUTUBE_LINK = args.yt_link
-LANGUAGE = args.lang
+LANGUAGE = args.lang.lower()
 
 if get_step_index(CONTINUE_FROM) > get_step_index(CONTINUE_TILL):
     print("ERROR: --continue-from step cannot be after --continue-till step.")
@@ -209,7 +209,7 @@ if (should_execute('segment', CONTINUE_FROM, CONTINUE_TILL)):
 if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         transcribed_text = indic_transcribe_chunks(
-            lang_code=lang_map.get(LANGUAGE.lower(), 'mr'),  # Default to Marathi if language not found
+            lang_code=lang_map.get(LANGUAGE, 'mr'),  # Default to Marathi if language not found
             exported_chunk_paths=exported_chunk_paths,
             output_file=TRANSCRIBE_OUTPUT_FILE
         )
@@ -243,7 +243,7 @@ if (should_execute('preprocess', CONTINUE_FROM, CONTINUE_TILL)):
             # Get first line
             punc_text = f_in.read()
 
-            preprocessed_text = preprocess_text(punc_text, lang_map.get(LANGUAGE.lower(), 'mr'))
+            preprocessed_text = preprocess_text(punc_text, lang_map.get(LANGUAGE, 'mr'))
 
             with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
                 f_out.write("\n".join(preprocessed_text))
@@ -279,7 +279,7 @@ if (should_execute('transliterate', CONTINUE_FROM, CONTINUE_TILL)):
         with ALIGNED_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
             aligned_result = json.load(f_in)
 
-            transliterated_result = transliterate_indic_to_english(aligned_result, lang_map.get(LANGUAGE.lower(), 'mr'))
+            transliterated_result = transliterate_indic_to_english(aligned_result, lang_map.get(LANGUAGE, 'mr'))
 
             with TRANSLITERATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
                 json.dump(transliterated_result, f_out, ensure_ascii=False, indent=4)
@@ -301,7 +301,7 @@ if (should_execute('translate', CONTINUE_FROM, CONTINUE_TILL)):
             for i in range(0, len(aligned_result), BATCH_SIZE):
                 chunk = aligned_result[i:i+BATCH_SIZE]
                 print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
-                translated = translate_indic_to_english(chunk, lang_map.get(LANGUAGE.lower(), 'mr'))
+                translated = translate_indic_to_english(chunk, lang_map.get(LANGUAGE, 'mr'))
                 translated_result.extend(translated)
 
             # save result into file after translation

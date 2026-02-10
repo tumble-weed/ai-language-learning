@@ -105,30 +105,28 @@ except Exception as e:
 # 4. Language code mapping
 # IndicTrans2 uses 3-letter ISO 639-3 codes with script identifiers.
 INDIC_LANG_CODE_TO_IT2_CODE = {
-    "hi": "hin_Deva",  # Hindi
-    "mr": "mar_Deva",  # Marathi
+    'as': "asm_Beng",  # Assamese
     "bn": "ben_Beng",  # Bengali
-    "ta": "tam_Taml",  # Tamil
-    "te": "tel_Telu",  # Telugu
-    "gu": "guj_Gujr",  # Gujarati
-    "kn": "kan_Knda",  # Kannada
-    "ml": "mal_Mlym",  # Malayalam
-    "pa": "pan_Guru",  # Punjabi
-    "ur": "urd_Arab",  # Urdu
-    "ne": "npi_Deva",  # Nepali (npi)
-    "si": "sin_Sinh",  # Sinhala
-    "as": "asm_Beng",  # Assamese
-    "or": "ory_Orya",  # Oriya
-    # --- Add all 22 scheduled languages ---
     "brx": "brx_Deva", # Bodo
     "doi": "doi_Deva", # Dogri
-    "gom": "gom_Deva", # Konkani
-    "kas": "kas_Arab", # Kashmiri (Arabic script)
+    "gu": "guj_Gujr",  # Gujarati
+    "hi": "hin_Deva",  # Hindi
+    "kn": "kan_Knda",  # Kannada
+    "ks": "kas_Arab", # Kashmiri (Arabic script)
+    "kok": "gom_Deva", # Konkani
     "mai": "mai_Deva", # Maithili
-    "mni": "mni_Beng", # Manipuri (Bengali script)
+    "ml": "mal_Mlym",  # Malayalam
+    "mni": "mni_Mtei", # Manipuri (Meitei script)
+    "mr": "mar_Deva",  # Marathi
+    "ne": "npi_Deva",  # Nepali (npi)
+    "or": "ory_Orya",  # Oriya
+    "pa": "pan_Guru",  # Punjabi
+    "sa": "san_Deva",  # Sanskrit
     "sat": "sat_Olck", # Santali
     "sd": "snd_Arab",  # Sindhi (Arabic script)
-    "sa": "san_Deva",  # Sanskrit
+    "ta": "tam_Taml",  # Tamil
+    "te": "tel_Telu",  # Telugu
+    "ur": "urd_Arab",  # Urdu
 }
 TARGET_LANG = "eng_Latn" # English
 
