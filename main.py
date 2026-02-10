@@ -175,12 +175,12 @@ if not AUDIO_FILE_PATH:
 # Step 2: Update the other paths based on the downloaded audio file
 # TODO: Use json instead of pkl
 OUTPUT_DIR = BASE_DIR / "output" / AUDIO_FILE_PATH.stem
-TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transcribed_output.pkl"
+TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transcribed_output.json"
 PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_punctuated_output.txt"
 SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_sentences_output.txt"
-ALIGNED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_aligned_output.pkl"
-TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transliteration_output.pkl"
-TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_translation_output.pkl"
+ALIGNED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_aligned_output.json"
+TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transliteration_output.json"
+TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_translation_output.json"
 OUTPUT_CSV_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_results.csv"
 
 # Audio segmentation based on silence
@@ -221,8 +221,8 @@ if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
 if (should_execute('punctuate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         transcribed_text = {}
-        with TRANSCRIBE_OUTPUT_FILE.open('rb') as f_in:
-            transcribed_text = pickle.load(f_in)
+        with TRANSCRIBE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
+            transcribed_text = json.load(f_in)
 
             punctuated_text = restore_punctuation(" ".join(transcript['text'] for transcript in transcribed_text))
 
@@ -259,13 +259,13 @@ if (should_execute('preprocess', CONTINUE_FROM, CONTINUE_TILL)):
 # After preprocessing, Identify the the proper timestamp for each sentenc chunk and get the corresponding audio file.
 if (should_execute('align', CONTINUE_FROM, CONTINUE_TILL)):
     try:
-        with SENTENCE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('rb') as t_in:
-            transcribed_text = pickle.load(t_in)
+        with SENTENCE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('r', encoding='utf-8') as t_in:
+            transcribed_text = json.load(t_in)
             preprocessed_text = [line.strip() for line in f_in if line.strip()] 
             aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
 
-            with ALIGNED_OUTPUT_FILE.open('wb') as f_out:
-                pickle.dump(aligned_result, f_out)
+            with ALIGNED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+                json.dump(aligned_result, f_out, ensure_ascii=False, indent=4)
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:
@@ -276,13 +276,13 @@ if (should_execute('align', CONTINUE_FROM, CONTINUE_TILL)):
 # Transliteration
 if (should_execute('transliterate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
-        with ALIGNED_OUTPUT_FILE.open('rb') as f_in:
-            aligned_result = pickle.load(f_in)
+        with ALIGNED_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
+            aligned_result = json.load(f_in)
 
-            transliterated_result = transliterate_indic_to_english(aligned_result, 'mr')
+            transliterated_result = transliterate_indic_to_english(aligned_result, lang_map.get(LANGUAGE.lower(), 'mr'))
 
-            with TRANSLITERATION_OUTPUT_FILE.open('wb') as f_out:
-                pickle.dump(transliterated_result, f_out)
+            with TRANSLITERATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+                json.dump(transliterated_result, f_out, ensure_ascii=False, indent=4)
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:
@@ -293,20 +293,20 @@ if (should_execute('transliterate', CONTINUE_FROM, CONTINUE_TILL)):
 # Translation
 if (should_execute('translate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
-        with TRANSLITERATION_OUTPUT_FILE.open('rb') as f_in:
-            aligned_result = pickle.load(f_in)
+        with TRANSLITERATION_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
+            aligned_result = json.load(f_in)
             BATCH_SIZE = 1
             translated_result = []
 
             for i in range(0, len(aligned_result), BATCH_SIZE):
                 chunk = aligned_result[i:i+BATCH_SIZE]
                 print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
-                translated = translate_indic_to_english(chunk, 'mr')
+                translated = translate_indic_to_english(chunk, lang_map.get(LANGUAGE.lower(), 'mr'))
                 translated_result.extend(translated)
 
             # save result into file after translation
-            with TRANSLATION_OUTPUT_FILE.open('wb') as f_out:
-                pickle.dump(translated_result, f_out)
+            with TRANSLATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+                json.dump(translated_result, f_out, ensure_ascii=False, indent=4)
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:
@@ -316,8 +316,8 @@ if (should_execute('translate', CONTINUE_FROM, CONTINUE_TILL)):
 # Metrics Calculation
 if (should_execute('metrics', CONTINUE_FROM, CONTINUE_TILL)):
     try:
-        with TRANSLATION_OUTPUT_FILE.open('rb') as f_in:
-            translated_result = pickle.load(f_in)
+        with TRANSLATION_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
+            translated_result = json.load(f_in)
 
         data = pd.DataFrame(translated_result)
 
