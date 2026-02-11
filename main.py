@@ -29,9 +29,6 @@ dotenv.load_dotenv()  # Load environment variables from .env file
 
 
 BASE_DIR = Path(__file__).resolve().parent
-AUDIO_FILE_DIR = BASE_DIR / "input"
-AUDIO_FILE_PATH = None  # Initialize AUDIO_FILE_PATH
-link = None
 
 STEPS = [
     'download',
@@ -74,19 +71,20 @@ lang_map = {
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Language Learning Pipeline.")
+
+    parser.add_argument(
+        '--output-dir-name',
+        type=str,
+        help="Path to store all the output files. If not provided, defaults to 'output' directory in the current working directory.",
+        required=True
+    )
+
     parser.add_argument(
         '--continue-from',
         type=str,
         choices=STEPS,
         default='download',
         help=f'Continue execution from a specific step. Choose from: {", ".join(STEPS)}'
-    )
-
-    parser.add_argument(
-        '--i',
-        type=str,
-        default=None,
-        help='Input json file for initializing parameters.'
     )
 
     parser.add_argument(
@@ -120,9 +118,9 @@ def should_execute(current_step, continue_from, continue_till):
 
 
 args = parse_arguments()
+OUTPUT_DIR_NAME = Path(args.output_dir_name)
 CONTINUE_FROM = args.continue_from
 CONTINUE_TILL = args.continue_till
-INPUT_FILE = args.i
 YOUTUBE_LINK = args.yt_link
 LANGUAGE = args.lang.lower()
 
@@ -133,65 +131,66 @@ if get_step_index(CONTINUE_FROM) > get_step_index(CONTINUE_TILL):
 if not YOUTUBE_LINK:
     print("ERROR: YouTube link must be provided via --yt-link argument.")
     sys.exit(1)
+    
 
-if INPUT_FILE:
-    # Load parameters from the input JSON file
-    try:
-        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            params = json.load(f)
-            AUDIO_FILE_PATH = Path(params.get('audio_file_path', None))
-            DROPBOX_LINK = params.get('dropbox_link', None)
-            LANGUAGE = params.get('language', 'marathi')
-    except Exception as e:
-        print(f"Error reading input file {INPUT_FILE}: {e}")
-        sys.exit(1)
+# Create output directory if it doesn't exist
+OUTPUT_DIR = BASE_DIR / "output" / OUTPUT_DIR_NAME
+if not OUTPUT_DIR.exists():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Define paths for intermediate and final outputs
+DOWNLOAD_OUTPUT_FILE = OUTPUT_DIR / "download_output.json"
+SEGMENT_OUTPUT_FILE = OUTPUT_DIR / "segments.json"
+TRANSCRIBE_OUTPUT_FILE = OUTPUT_DIR / "transcription.json"
+PUNCTUATED_OUTPUT_FILE = OUTPUT_DIR / "punctuation.txt"
+PREPROCESS_OUTPUT_FILE = OUTPUT_DIR / "preprocess.txt"
+ALIGNED_OUTPUT_FILE = OUTPUT_DIR / "align.json"
+TRANSLITERATION_OUTPUT_FILE = OUTPUT_DIR / "transliteration.json"
+TRANSLATION_OUTPUT_FILE = OUTPUT_DIR / "translation.json"
+OUTPUT_CSV_FILE = OUTPUT_DIR / "results.csv"
 
 # Step 1: Download YouTube video as WAV audio
 try:
     if (should_execute('download', CONTINUE_FROM, CONTINUE_TILL)):
-        DROPBOX_LINK, AUDIO_FILE_PATH = download_youtube_as_wav(YOUTUBE_LINK, AUDIO_FILE_DIR)
+        DROPBOX_LINK, AUDIO_FILE_PATH = download_youtube_as_wav(YOUTUBE_LINK, OUTPUT_DIR)
         if not AUDIO_FILE_PATH:
             raise Exception("AUDIO_FILE_PATH must be defined when continuing from a later step.")
         else:
-            # create a json file to store youtube link, audio file path and dropbox link
-            params = {
-                'audio_file_path': str(AUDIO_FILE_PATH),
-                'dropbox_link': DROPBOX_LINK,
-                'language': LANGUAGE
-            }
-            os.makedirs(BASE_DIR / "jsons", exist_ok=True)
-            with open(BASE_DIR / "jsons" / f"{AUDIO_FILE_PATH.stem}.json", 'w', encoding='utf-8') as f:
-                json.dump(params, f, ensure_ascii=False, indent=4)
+            # Save the dropbox link and audio file path in a json file for future reference
+            with open(DOWNLOAD_OUTPUT_FILE, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "dropbox_link": DROPBOX_LINK,
+                    "audio_file_path": str(AUDIO_FILE_PATH)
+                }, f, ensure_ascii=False, indent=4)
 except Exception as e:
     print(f"Error during download step: {e}")
     print(traceback.format_exc())
     sys.exit(1)
 
-if not AUDIO_FILE_PATH:
-    print("ERROR: AUDIO_FILE_PATH is not defined. Either Start from 'download' step or provide --i input json file.")
+
+# Always load AUDIO_FILE_PATH and DROPBOX_LINK from the download output file if it exists, regardless of the current step. This ensures that subsequent steps have access to these variables even if we are continuing from a later step.
+if DOWNLOAD_OUTPUT_FILE.exists():
+    with open(DOWNLOAD_OUTPUT_FILE, 'r', encoding='utf-8') as f:
+        download_info = json.load(f)
+        DROPBOX_LINK = download_info.get("dropbox_link")
+        AUDIO_FILE_PATH = Path(download_info.get("audio_file_path"))
+else:
+    print(f"ERROR: Download output file not found at {DOWNLOAD_OUTPUT_FILE}. Please ensure the download step has been executed successfully at least once.")
     sys.exit(1)
-    
-# Step 2: Update the other paths based on the downloaded audio file
-# TODO: Use json instead of pkl
-OUTPUT_DIR = BASE_DIR / "output" / AUDIO_FILE_PATH.stem
-TRANSCRIBE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transcribed_output.json"
-PUNCTUATED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_punctuated_output.txt"
-SENTENCE_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_sentences_output.txt"
-ALIGNED_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_aligned_output.json"
-TRANSLITERATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_transliteration_output.json"
-TRANSLATION_OUTPUT_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_translation_output.json"
-OUTPUT_CSV_FILE = BASE_DIR / "output" / f"{AUDIO_FILE_PATH.stem}_results.csv"
+
 
 # Audio segmentation based on silence
 if (should_execute('segment', CONTINUE_FROM, CONTINUE_TILL)):
-    exported_chunk_paths = segment_dialogue(
+    exported_chunks_info = segment_dialogue(
         audio_file_path=AUDIO_FILE_PATH,
-        output_dir=OUTPUT_DIR
     )
 
-    if(exported_chunk_paths):
-        print(f"Dialogue segments exported to: {OUTPUT_DIR}")
+    if(exported_chunks_info):
+        print(f"Dialogue segments exported successfully. Total segments: {len(exported_chunks_info)}")
+        # Save the exported chunk paths in a json file for future reference
+        with open(SEGMENT_OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            # The exported chunk infor is a list of tuples containing (chunk_path, start_time, end_time). Saving this in json.
+            json.dump(exported_chunks_info, f, ensure_ascii=False, indent=4)
     else:
         print("No dialogue segments found.")
         exit(1)
@@ -204,15 +203,22 @@ if (should_execute('segment', CONTINUE_FROM, CONTINUE_TILL)):
 #         output_file=TRANSCRIBE_OUTPUT_FILE
 #     )
 
-# TODO: Have a standard lang_code variable across the pipeline
 # Transcrib1e audio-to-text (indic)
 if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
     try:
+
+        with open(SEGMENT_OUTPUT_FILE, 'r', encoding='utf-8') as f:
+            exported_chunks_info = json.load(f)
+
         transcribed_text = indic_transcribe_chunks(
             lang_code=lang_map.get(LANGUAGE, 'mr'),  # Default to Marathi if language not found
-            exported_chunk_paths=exported_chunk_paths,
-            output_file=TRANSCRIBE_OUTPUT_FILE
+            exported_chunk_paths=exported_chunks_info,
         )
+
+        with open(TRANSCRIBE_OUTPUT_FILE, "w", encoding="utf-8") as f:
+            # save the list of dictionaries as a JSON array
+            json.dump(transcribed_text, f, ensure_ascii=False, indent=4)
+            
     except Exception as e:
         print(f"An error occurred during transcription: {e}")
         sys.exit(1)
@@ -220,15 +226,14 @@ if (should_execute('transcribe', CONTINUE_FROM, CONTINUE_TILL)):
 # Punctuation restoration
 if (should_execute('punctuate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
-        transcribed_text = {}
         with TRANSCRIBE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
             transcribed_text = json.load(f_in)
 
-            punctuated_text = restore_punctuation(" ".join(transcript['text'] for transcript in transcribed_text))
+        punctuated_text = restore_punctuation(" ".join(transcript['text'] for transcript in transcribed_text))
 
-            with PUNCTUATED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-                f_out.write(punctuated_text)
-            print(f"Punctuated text saved to: {PUNCTUATED_OUTPUT_FILE}")
+        with PUNCTUATED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            f_out.write(punctuated_text)
+        print(f"Punctuated text saved to: {PUNCTUATED_OUTPUT_FILE}")
     except FileNotFoundError:
         print(f"ERROR: Input file not found at {TRANSCRIBE_OUTPUT_FILE}")
     except Exception as e:
@@ -243,14 +248,14 @@ if (should_execute('preprocess', CONTINUE_FROM, CONTINUE_TILL)):
             # Get first line
             punc_text = f_in.read()
 
-            preprocessed_text = preprocess_text(punc_text, lang_map.get(LANGUAGE, 'mr'))
+        preprocessed_text = preprocess_text(punc_text, lang_map.get(LANGUAGE, 'mr'))
 
-            with SENTENCE_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-                f_out.write("\n".join(preprocessed_text))
+        with PREPROCESS_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            f_out.write("\n".join(preprocessed_text))
                 
-            print(f"Preprocessed sentences saved to: {SENTENCE_OUTPUT_FILE}")
+            print(f"Preprocessed sentences saved to: {PREPROCESS_OUTPUT_FILE}")
     except FileNotFoundError:
-        print(f"ERROR: Input file not found at {TRANSCRIBE_OUTPUT_FILE}")
+        print(f"ERROR: Input file not found at {PUNCTUATED_OUTPUT_FILE}")
     except Exception as e:
         print(f"An error occurred during preprocessing: {e}")
         sys.exit(1)
@@ -259,13 +264,14 @@ if (should_execute('preprocess', CONTINUE_FROM, CONTINUE_TILL)):
 # After preprocessing, Identify the the proper timestamp for each sentenc chunk and get the corresponding audio file.
 if (should_execute('align', CONTINUE_FROM, CONTINUE_TILL)):
     try:
-        with SENTENCE_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('r', encoding='utf-8') as t_in:
+        with PREPROCESS_OUTPUT_FILE.open('r', encoding='utf-8') as f_in, TRANSCRIBE_OUTPUT_FILE.open('r', encoding='utf-8') as t_in:
             transcribed_text = json.load(t_in)
             preprocessed_text = [line.strip() for line in f_in if line.strip()] 
-            aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
 
-            with ALIGNED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-                json.dump(aligned_result, f_out, ensure_ascii=False, indent=4)
+        aligned_result = align_sentences_to_timestamps(transcribed_text, preprocessed_text, AUDIO_FILE_PATH)
+
+        with ALIGNED_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            json.dump(aligned_result, f_out, ensure_ascii=False, indent=4)
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:
@@ -279,10 +285,10 @@ if (should_execute('transliterate', CONTINUE_FROM, CONTINUE_TILL)):
         with ALIGNED_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
             aligned_result = json.load(f_in)
 
-            transliterated_result = transliterate_indic_to_english(aligned_result, lang_map.get(LANGUAGE, 'mr'))
+        transliterated_result = transliterate_indic_to_english(aligned_result, lang_map.get(LANGUAGE, 'mr'))
 
-            with TRANSLITERATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-                json.dump(transliterated_result, f_out, ensure_ascii=False, indent=4)
+        with TRANSLITERATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            json.dump(transliterated_result, f_out, ensure_ascii=False, indent=4)
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:
@@ -295,18 +301,19 @@ if (should_execute('translate', CONTINUE_FROM, CONTINUE_TILL)):
     try:
         with TRANSLITERATION_OUTPUT_FILE.open('r', encoding='utf-8') as f_in:
             aligned_result = json.load(f_in)
-            BATCH_SIZE = 1
-            translated_result = []
 
-            for i in range(0, len(aligned_result), BATCH_SIZE):
-                chunk = aligned_result[i:i+BATCH_SIZE]
-                print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
-                translated = translate_indic_to_english(chunk, lang_map.get(LANGUAGE, 'mr'))
-                translated_result.extend(translated)
+        BATCH_SIZE = 1
+        translated_result = []
 
-            # save result into file after translation
-            with TRANSLATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
-                json.dump(translated_result, f_out, ensure_ascii=False, indent=4)
+        for i in range(0, len(aligned_result), BATCH_SIZE):
+            chunk = aligned_result[i:i+BATCH_SIZE]
+            print(f"Translating batch {i//BATCH_SIZE + 1} containing {len(chunk)} sentences...")
+            translated = translate_indic_to_english(chunk, lang_map.get(LANGUAGE, 'mr'))
+            translated_result.extend(translated)
+
+        # save result into file after translation
+        with TRANSLATION_OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+            json.dump(translated_result, f_out, ensure_ascii=False, indent=4)
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:

@@ -23,7 +23,7 @@ model = AutoModel.from_pretrained(
     trust_remote_code=True,
 )
 
-def indic_transcribe_chunks(lang_code, exported_chunk_paths, output_file=None):
+def indic_transcribe_chunks(lang_code, exported_chunk_paths):
   all_transcripts = []
 
   for i, file_info in enumerate(exported_chunk_paths):
@@ -49,12 +49,5 @@ def indic_transcribe_chunks(lang_code, exported_chunk_paths, output_file=None):
 
     print(f"RNNT Transcription from {os.path.basename(file_info[0])}: {transcription_rnnt}")
 
-
-  # Storing all_transcripts all dictionaries to output file
-  if output_file:
-     with open(output_file, "w", encoding="utf-8") as f:
-        # save the list of dictionaries as a JSON array
-        json.dump(all_transcripts, f, ensure_ascii=False, indent=4)
-        
   return all_transcripts
 
