@@ -174,7 +174,7 @@ def align_sentences_to_timestamps(chunks, final_sentences, original_audio_file, 
         
     # Create a dedicated output directory
     audio_path = Path(original_audio_file)
-    output_dir = audio_path.parent / f"{audio_path.stem}_segments"
+    output_dir = audio_path.parent / f"aligned_segments"
     output_dir.mkdir(exist_ok=True)
     print(f"Saving segments to: {output_dir}")
 

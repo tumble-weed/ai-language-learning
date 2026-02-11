@@ -1,7 +1,7 @@
 from transformers import AutoModel, AutoConfig
 import torch, torchaudio
 import os
-import pickle
+import json
 
 HF_MODELS_DIR = ".\\huggingface_models"
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -23,7 +23,7 @@ model = AutoModel.from_pretrained(
     trust_remote_code=True,
 )
 
-def indic_transcribe_chunks(lang_code, exported_chunk_paths, output_file=None):
+def indic_transcribe_chunks(lang_code, exported_chunk_paths):
   all_transcripts = []
 
   for i, file_info in enumerate(exported_chunk_paths):
@@ -49,11 +49,5 @@ def indic_transcribe_chunks(lang_code, exported_chunk_paths, output_file=None):
 
     print(f"RNNT Transcription from {os.path.basename(file_info[0])}: {transcription_rnnt}")
 
-
-  # Storing all_transcripts all dictionaries to output file
-  if output_file:
-     with open(output_file, 'wb') as f_out:
-        pickle.dump(all_transcripts, f_out)
-        
   return all_transcripts
 
