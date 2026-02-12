@@ -319,12 +319,13 @@ if (should_execute('metrics', CONTINUE_FROM, CONTINUE_TILL)):
         data.to_csv(OUTPUT_CSV_FILE)
 
         # Upload CSV file to Google Drive using rclone
-        upload_files([str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))
+        upload_files([str(AUDIO_FILE_PATH.stem) + str(OUTPUT_CSV_FILE)], os.getenv("DROPBOX_CSV_FOLDER_PATH"))
     except FileNotFoundError as fnf_error:
         print(f"ERROR: {fnf_error}")
     except Exception as e:
         print(f"An error occurred during metrics calculation: {e}")
         sys.exit(1)
+
 
 
 # TODO: Clean up intermediate files only after reaching the end successfully. 

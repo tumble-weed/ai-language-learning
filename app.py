@@ -17,6 +17,8 @@ import dotenv
 import subprocess
 import json
 import numpy as np
+import yaml
+import re
 from datetime import datetime, timezone
 from skelo.model.glicko2 import Glicko2Model
 from fsrs import Scheduler, Card, Rating
@@ -186,6 +188,8 @@ if 'yt_process' not in st.session_state:
     st.session_state.yt_process = None
 if 'yt_link' not in st.session_state:
     st.session_state.yt_link = ""
+if 'yt_language' not in st.session_state:
+    st.session_state.yt_language = "hindi"  # Default language
 # Initialize or restore yt_job from cookies (fast) or Dropbox (fallback)
 # This runs every page load to ensure we have the latest state
 if st.session_state.get('authenticated', False) and st.session_state.get('user_info'):
@@ -234,6 +238,32 @@ else:
             "finished_at": None,
             "exit_code": None,
         }
+
+# Supported Indian languages
+LANGUAGES = [
+    'assamese',
+    'bengali',
+    'bodo',
+    'dogri',
+    'gujarati',
+    'hindi',
+    'kannada',
+    'kashmiri',
+    'konkani',
+    'maithili',
+    'malayalam',
+    'manipuri',
+    'marathi',
+    'nepali',
+    'oriya',
+    'punjabi',
+    'sanskrit',
+    'santali',
+    'sindhi',
+    'tamil',
+    'telugu',
+    'urdu',
+]
 
 # Translation game constants
 MIN_RATING = 600
@@ -499,31 +529,57 @@ def refresh_yt_process_status(show_message: bool = False) -> None:
             st.error(f"❌ YouTube video processing failed with exit code {poll_result}")
 
 
-def start_yt_process(yt_link: str) -> None:
+def start_yt_process(yt_link: str, language: str = "hindi") -> None:
     """Start the YouTube processing subprocess and persist metadata."""
     main_py_path = Path(__file__).resolve().parent / "main.py"
     if not main_py_path.exists():
         st.error(f"❌ main.py not found at {main_py_path}")
         return
 
-    proc = subprocess.Popen(
-        [sys.executable, str(main_py_path), "--yt-link", yt_link],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding='utf-8',
-    )
+    # Extract video ID or create output dir name from link
+    video_id_match = re.search(r'(?:v=|youtu\.be/)([^&\n?#]+)', yt_link)
+    output_dir_name = video_id_match.group(1) if video_id_match else f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    config_data = {
+        "output-dir-name": output_dir_name,
+        "continue-from": "download",
+        "continue-till": "metrics",
+        "yt-link": yt_link,
+        "lang": language.lower()
+    }
+    
+    # Create temporary config file that will be auto-cleaned by the OS
+    temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False, encoding='utf-8')
+    try:
+        yaml.dump(config_data, temp_config, allow_unicode=True)
+        temp_config.close()
+        
+        proc = subprocess.Popen(
+            [sys.executable, str(main_py_path), "--config", temp_config.name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+        )
 
-    st.session_state.yt_process = proc
-    st.session_state.yt_link = yt_link
-    _set_yt_job(
-        "running",
-        pid=proc.pid,
-        link=yt_link,
-        started_at=datetime.now(timezone.utc).isoformat(),
-        finished_at=None,
-        exit_code=None,
-    )
+        st.session_state.yt_process = proc
+        st.session_state.yt_link = yt_link
+        st.session_state.yt_language = language
+        _set_yt_job(
+            "running",
+            pid=proc.pid,
+            link=yt_link,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            finished_at=None,
+            exit_code=None,
+        )
+    except Exception as e:
+        # Clean up temp file if process creation fails
+        try:
+            os.unlink(temp_config.name)
+        except:
+            pass
+        raise e
 
 
 def cancel_yt_process() -> None:
@@ -1359,6 +1415,15 @@ with tab2:
     if st.session_state.yt_job.get('status') in {'running', 'finished', 'failed', 'cancelled'}:
         refresh_yt_process_status()
     
+    # Language selection dropdown
+    selected_language = st.selectbox(
+        "Select Language",
+        options=LANGUAGES,
+        index=LANGUAGES.index(st.session_state.yt_language) if st.session_state.yt_language in LANGUAGES else LANGUAGES.index('hindi'),
+        disabled=st.session_state.yt_processing,
+        help="Select the language of the video content"
+    )
+    
     col1, col2 = st.columns([3, 1])
     
     with col1:
@@ -1382,9 +1447,10 @@ with tab2:
     if process_btn and yt_link_input:
         try:
             st.session_state.yt_link = yt_link_input
-            start_yt_process(yt_link_input)
+            st.session_state.yt_language = selected_language
+            start_yt_process(yt_link_input, selected_language)
             if st.session_state.yt_processing:
-                st.success(f"✅ Processing started for: {yt_link_input}")
+                st.success(f"✅ Processing started for: {yt_link_input} ({selected_language.title()})")
                 st.info("⏳ The video is being processed in the background. You can continue using other tabs while waiting.")
                 st.rerun()
         except Exception as e:
