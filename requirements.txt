@@ -334,3 +334,4 @@ yt-dlp==2026.2.4
 zipp==3.23.0
 zope-event==6.1
 zope-interface==8.0.1
+PyYAML==6.0.3

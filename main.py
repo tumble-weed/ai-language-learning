@@ -18,7 +18,7 @@ from metrics.english_metrics import get_features
 # import csv
 from pathlib import Path
 import dotenv
-import pickle
+import yaml
 import pandas as pd
 import joblib
 import json
@@ -73,39 +73,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Language Learning Pipeline.")
 
     parser.add_argument(
-        '--output-dir-name',
+        "--config",
         type=str,
-        help="Path to store all the output files. If not provided, defaults to 'output' directory in the current working directory.",
+        help="Path to the YAML configuration file.",
         required=True
-    )
-
-    parser.add_argument(
-        '--continue-from',
-        type=str,
-        choices=STEPS,
-        default='download',
-        help=f'Continue execution from a specific step. Choose from: {", ".join(STEPS)}'
-    )
-
-    parser.add_argument(
-        '--yt-link',
-        type=str,
-        default=None,
-        help='YouTube link of the video to be processed.'
-    )
-
-    parser.add_argument(
-        '--continue-till',
-        type=str,
-        choices=STEPS,
-        default='metrics',
-        help=f'Continue execution till a specific step. Choose from: {", ".join(STEPS)}'
-    )
-
-    parser.add_argument(
-        '--lang',
-        type=str,
-        default='marathi',
     )
 
     return parser.parse_args()
@@ -118,11 +89,15 @@ def should_execute(current_step, continue_from, continue_till):
 
 
 args = parse_arguments()
-OUTPUT_DIR_NAME = Path(args.output_dir_name)
-CONTINUE_FROM = args.continue_from
-CONTINUE_TILL = args.continue_till
-YOUTUBE_LINK = args.yt_link
-LANGUAGE = args.lang.lower()
+
+with open(args.config, 'r', encoding='utf-8') as config_file:
+    config = yaml.safe_load(config_file)
+
+OUTPUT_DIR_NAME = Path(config.get("output-dir-name"))
+CONTINUE_FROM = config.get("continue-from", "download")
+CONTINUE_TILL = config.get("continue-till", "metrics")
+YOUTUBE_LINK = config.get("yt-link")
+LANGUAGE = config.get("lang", "marathi").lower()
 
 if get_step_index(CONTINUE_FROM) > get_step_index(CONTINUE_TILL):
     print("ERROR: --continue-from step cannot be after --continue-till step.")
