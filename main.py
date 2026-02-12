@@ -330,7 +330,7 @@ if (should_execute('metrics', CONTINUE_FROM, CONTINUE_TILL)):
 
         features = get_features(data, concat=False)
 
-        difficulty_model = joblib.load('models\\al_random_forest_model.pkl')
+        difficulty_model = joblib.load(BASE_DIR / "models" / "al_random_forest_model.pkl")
 
         diffs = difficulty_model.predict(features.values)
 

@@ -3,7 +3,7 @@ import torch, torchaudio
 import os
 import json
 
-HF_MODELS_DIR = ".\\huggingface_models"
+HF_MODELS_DIR = "huggingface_models"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 model_name = "ai4bharat/indic-conformer-600m-multilingual"
@@ -12,7 +12,7 @@ model_name = "ai4bharat/indic-conformer-600m-multilingual"
 
 config = AutoConfig.from_pretrained(
     model_name,
-    use_auth_token=HF_TOKEN,
+    token=HF_TOKEN,
     trust_remote_code=True,
 )
 

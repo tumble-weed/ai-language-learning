@@ -5,8 +5,8 @@ __pycache__/
 .env
 output/
 indiclid-ftn
-input/
 mlruns
 mlartifacts
 rclone.conf
 .vscode/
+cadence/

@@ -6,8 +6,11 @@ Processing incomplete sentences.
 
 import fasttext
 import os
+from pathlib import Path
 
-INDICLID_MODEL_PATH = ".\\indiclid-ftn\\model_baseline_roman.bin"
+BASE_DIR = Path(__file__).resolve().parent.parent
+INDICLID_MODEL_PATH = str(BASE_DIR / "indiclid-ftn" / "model_baseline_roman.bin")
+
 indiclid_model = fasttext.load_model(INDICLID_MODEL_PATH)
 
 lang_code_map = {

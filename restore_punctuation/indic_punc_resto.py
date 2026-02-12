@@ -1,11 +1,15 @@
 from cadence import PunctuationModel
+import torch
+from pathlib import Path
 
-MODEL_DIR = "..\\cadence"
+BASE_DIR = Path(__file__).parent
+MODEL_DIR = BASE_DIR / "cadence"
 
 # Load model (local path)
 model = PunctuationModel(
     model_path=MODEL_DIR,
-    cpu=True,
+    # Set cpu=True if gpu not available
+    cpu=True if not torch.cuda.is_available() else False,
     max_length=512,  # length for trunation; also used as window size when sliding_window=True
     attn_implementation="eager",
     sliding_window=True,  # Handle long texts
