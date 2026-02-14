@@ -8,13 +8,13 @@ MODEL_DIR = BASE_DIR / "cadence"
 # Load model (local path)
 model = PunctuationModel(
     model_path=MODEL_DIR,
-    # Set cpu=True if gpu not available
-    cpu=True if not torch.cuda.is_available() else False,
-    max_length=512,  # length for trunation; also used as window size when sliding_window=True
+    cpu=True if not torch.cuda.is_available() else False, # Set cpu=True if gpu not available
+    max_length=512,  # length for truncation; also used as window size when sliding_window=True
     attn_implementation="eager",
     sliding_window=True,  # Handle long texts
-    verbose=False,  # Quiet mode
+    verbose=True,  # Quiet mode
     d_type="float32",
+    model='Cadence-Fast'
 )
 
 def restore_punctuation(input_text: str) -> list[str]:

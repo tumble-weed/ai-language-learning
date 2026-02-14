@@ -28,22 +28,9 @@ dotenv.load_dotenv()  # Load environment variables from .env file
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # This import is now possible because of the git+ install command above
-try:
-    from IndicTransToolkit.processor import IndicProcessor
-except ImportError:
-    print("="*80)
-    print("ERROR: 'IndicTransToolkit' not found.")
-    print('Please install the required dependencies:')
-    print('pip install torch transformers sentencepiece accelerate "git+https://github.com/AI4Bharat/IndicTrans2.git#subdirectory=huggingface_interface"')
-    print("="*80)
-    IndicProcessor = None
+from IndicTransToolkit.processor import IndicProcessor
 
-# --- Module-level initializations ---
-
-# 1. Define the model checkpoint.
-# This is the AI4Bharat model fine-tuned for Indic-to-English translation.
 MODEL_NAME = "ai4bharat/indictrans2-indic-en-1B"
-# MODEL_NAME = "prajdabre/rotary-indictrans2-indic-en-1B"
 
 # 2. Set up device (GPU if available, else CPU)
 if torch.cuda.is_available():

@@ -1,3 +1,5 @@
 yt-link: https://youtu.be/Vi7-Aqc8104?si=15MTQMP80MAt9lQ5
 lang: telugu
 output-dir-name: Death Note
+continue-from: punctuate
+continue-till: translate
